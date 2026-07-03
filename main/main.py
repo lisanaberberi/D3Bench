@@ -3,6 +3,8 @@ from Benchmark import Criteria
 from Tool import Evidently
 from Tool import AlibiDetect
 from Tool import NannyML
+from Tool import Frouros
+from Tool import River
 import Dataset
 from Dataset import Data_Occupacy
 from Dataset import Data_Energy
@@ -17,8 +19,10 @@ def main():
 
     # 2. select the tools
     tools = {Evidently("Evidently", False), Evidently("Evidently", True),
-              NannyML("NannyML", False), NannyML("NannyML", True), 
-              AlibiDetect("AlibiDetect", True)} 
+              NannyML("NannyML", False), NannyML("NannyML", True),
+              AlibiDetect("AlibiDetect", True),
+              Frouros("Frouros", True),
+              River("River", True)}
 
     # 3. select criteria
     criteria = [Criteria.FUNCTIONAL, Criteria.RUNTIME, Criteria.CPU_RUNTIME, Criteria.STORAGE]
@@ -55,6 +59,9 @@ def clean():
              'jensenshannon', 'kl_div', 'mannw', 'psi', 't_test', 'wasserstein'}
     nannyml_tests = {'kolmogorov_smirnov', 'wasserstein', 'jensen_shannon', 'hellinger'}
     alibidetect_tests = {'kolmogorov_smirnov', 'cramer_von_mises', 'spotdiff', 'mmd', 'lsdd'}
+    frouros_tests = {'kolmogorov_smirnov', 'cramer_von_mises', 'anderson', 'mannw', 't_test', 'chi_square',
+             'bws', 'kuiper', 'psi', 'kl_div', 'jensenshannon', 'hellinger', 'ed', 'bhattacharyya', 'hi', 'mmd'}
+    river_tests = {'kswin', 'adwin', 'page_hinkley'}
 
     for dataset_name in ('data_energy', 'data_occupacy'):
         for i in range(1, 37):
@@ -69,6 +76,14 @@ def clean():
                         os.remove(file_name)
             for test in alibidetect_tests:
                 file_name = os.path.join(reports_dir, dataset_name, 'alibidetect', "alibidetect_report_{}_{}.svg".format(i, test))
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+            for test in frouros_tests:
+                file_name = os.path.join(reports_dir, dataset_name, 'frouros', "frouros_report_{}_{}.svg".format(i, test))
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+            for test in river_tests:
+                file_name = os.path.join(reports_dir, dataset_name, 'river', "river_report_{}_{}.svg".format(i, test))
                 if os.path.exists(file_name):
                     os.remove(file_name)
 

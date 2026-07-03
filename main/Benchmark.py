@@ -114,6 +114,12 @@ class Benchmark:
                     'ram_avg': self.ram_avg,
                     'ram_max': self.ram_max,
                     'run_on_vm': self.runOnVm,
+                    # set only for tests that subsample x_ref/x_cur (e.g. AlibiDetect mmd/lsdd);
+                    # NaN here means the test ran on the full ref/cur window like every other tool
+                    'n_ref_used': stats.get('n_ref_used'),
+                    'n_cur_used': stats.get('n_cur_used'),
+                    'n_ref_total': stats.get('n_ref_total'),
+                    'n_cur_total': stats.get('n_cur_total'),
                 }
 
                 for col in column_names:
