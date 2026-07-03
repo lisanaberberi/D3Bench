@@ -210,10 +210,20 @@ class NannyML(Tool):
         return my_dict
 
 class AlibiDetect(Tool):
+    # MMD/LSDD build an O(n^2) kernel matrix; cap sample size so it doesn't OOM on large windows
+    MAX_KERNEL_SAMPLES = 2000
+
     def __init__(self, name, showReport=False):
         super().__init__(name)
         self.showReport = showReport
         self.methods = {METHODS.KOLMOGOROV_SMIRNOV, METHODS.CVM, METHODS.SPOTDIFF, METHODS.MMD, METHODS.LSDD}
+
+    def __subsample(self, data, max_samples=MAX_KERNEL_SAMPLES):
+        if len(data) <= max_samples:
+            return data
+        rng = np.random.default_rng(0)
+        idx = rng.choice(len(data), size=max_samples, replace=False)
+        return data[idx]
 
     def preprocess(self):
         if 'prob_predicted' in self.ref:
@@ -281,8 +291,8 @@ class AlibiDetect(Tool):
             if self.showReport:
                 self.__saveGlobalReport(building_id, test, score, drifted)
         elif test == 'mmd':
-            cd = MMDDrift(x_ref = self.ref)
-            report_dict = cd.predict(self.cur, return_p_val=True)
+            cd = MMDDrift(x_ref = self.__subsample(self.ref))
+            report_dict = cd.predict(self.__subsample(self.cur), return_p_val=True)
             score = report_dict['data']['p_val']
             drifted = report_dict['data']['is_drift']
             my_dict = {
@@ -292,8 +302,8 @@ class AlibiDetect(Tool):
             if self.showReport:
                 self.__saveGlobalReport(building_id, test, score, drifted)
         elif test == 'lsdd':
-            cd = LSDDDrift(x_ref = self.ref)
-            report_dict = cd.predict(self.cur, return_p_val=True)
+            cd = LSDDDrift(x_ref = self.__subsample(self.ref))
+            report_dict = cd.predict(self.__subsample(self.cur), return_p_val=True)
             score = report_dict['data']['p_val']
             drifted = report_dict['data']['is_drift']
             my_dict = {
