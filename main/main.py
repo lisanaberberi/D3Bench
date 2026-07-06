@@ -25,7 +25,15 @@ def main():
               River("River", True)}
 
     # 3. select criteria
-    criteria = [Criteria.FUNCTIONAL, Criteria.RUNTIME, Criteria.CPU_RUNTIME, Criteria.STORAGE]
+    # NOTE: Criteria.STORAGE is left out by default. It measures RAM via memory_profiler's
+    # memory_usage(), which forks this process (already carrying tensorflow/torch/alibi-detect/
+    # evidently/nannyml/frouros/river from Tool.py's imports) to sample the child's RSS. With
+    # Frouros in `tools`, this reproducibly spiked system memory to 20-28GB (of 30GB total) within
+    # seconds to minutes -- confirmed 3x, including one apparent kernel OOM-kill -- even after
+    # ruling out joblib/multiprocessing as the cause (Frouros's permutation test no longer uses
+    # joblib at all). Root cause not confirmed. Re-add STORAGE only for a `tools` set that
+    # excludes Frouros, or investigate further in an environment where an OOM is safe to hit.
+    criteria = [Criteria.FUNCTIONAL, Criteria.RUNTIME, Criteria.CPU_RUNTIME]
 
     # 4. select if run on vm: True if run on vm, False if run locally
     vm = False

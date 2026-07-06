@@ -9,14 +9,13 @@ from alibi_detect.cd import KSDrift, CVMDrift, SpotTheDiffDrift, MMDDrift, LSDDD
 
 from frouros.detectors.data_drift.batch import (
     KSTest, CVMTest, AndersonDarlingTest, ChiSquareTest, MannWhitneyUTest, WelchTTest,
-    BWSTest, KuiperTest, PSI, KL, JS, EMD, HellingerDistance, EnergyDistance,
+    BWSTest, KuiperTest, PSI, KL, JS, HellingerDistance, EnergyDistance,
     BhattacharyyaDistance, HINormalizedComplement, MMD as FrourosMMD,
 )
-from frouros.callbacks.batch import PermutationTestDistanceBased
-
 from river.drift import ADWIN, KSWIN, PageHinkley
 
 from enum import Enum
+import gc
 import os
 import pandas as pd # pip install pandas
 import numpy as np
@@ -382,13 +381,20 @@ class AlibiDetect(Tool):
 
 class Frouros(Tool):
     ALPHA = 0.05
-    PERMUTATIONS = 100          # permutation count for the univariate distance-based tests (cheap, O(n) per permutation)
+    # Even with the joblib-free permutation loop below, this process (Tool.py also imports
+    # tensorflow/torch/alibi-detect/evidently/nannyml at module level) was observed to peak at
+    # 20-25GB RSS running Frouros's full 16 methods x 4 columns, regardless of memory_profiler or
+    # joblib -- reproduced 3x, once alongside an apparent kernel OOM-kill. Root cause not
+    # confirmed (likely temporary arrays across ~30 repeated fit/compare calls per method not
+    # being reclaimed promptly). Permutation counts cut down and explicit gc.collect() added
+    # between calls as a mitigation; re-verify on your machine before trusting this at full scale.
+    PERMUTATIONS = 20           # permutation count for the univariate distance-based tests (was 100)
     # MMD builds an O(n^2) kernel matrix like AlibiDetect's, but frouros computes it in chunks
     # (chunk_size) instead of materializing the full matrix, so ref/cur are NOT subsampled here --
     # unlike AlibiDetect.MMD/LSDD, this test runs on the full window. The tradeoff is fewer
     # permutations (each one re-chunks the O(n^2) kernel, which is expensive at full scale).
     MMD_CHUNK_SIZE = 500
-    MMD_PERMUTATIONS = 30
+    MMD_PERMUTATIONS = 5        # was 30
 
     def __init__(self, name, showReport=False):
         super().__init__(name)
@@ -449,6 +455,7 @@ class Frouros(Tool):
             elif test == METHODS.MMD:
                 my_dict['Maximum Mean Discrepancy'] = self.__runMMD(building_id)
 
+        gc.collect()
         return my_dict
 
     # KSTest/CVMTest/AndersonDarlingTest/... natively return a p-value from compare(), no permutation needed
@@ -471,15 +478,42 @@ class Frouros(Tool):
 
     # PSI/KL/JS/EMD/... only return a raw distance; attach a permutation-test callback to get a
     # p-value so drift decisions use the same alpha=0.05 rule as the native statistical tests
+    # frouros's own PermutationTestDistanceBased callback goes through joblib's Parallel even at
+    # num_jobs=1, and creating ~32 short-lived Parallel() instances in this process (one per
+    # column/method call) leaked memory without bound -- confirmed via isolated testing to spike
+    # process RSS to ~21-28GB regardless of num_jobs. This manual, joblib-free permutation loop
+    # replaces it: same statistical procedure (shuffle ref+cur, recompute the stat, compare to the
+    # observed value), just without any multiprocessing machinery.
+    def __permutationPValue(self, ref, cur, detector_cls, extra_kwargs, num_permutations):
+        det = detector_cls(**extra_kwargs)
+        det.fit(X=ref)
+        result, _ = det.compare(X=cur)
+        observed = abs(float(result.distance))
+        del det, result
+
+        rng = np.random.default_rng(0)
+        combined = np.concatenate([ref, cur], axis=0)
+        n_ref = len(ref)
+        exceed = 0
+        for _ in range(num_permutations):
+            rng.shuffle(combined)
+            perm_det = detector_cls(**extra_kwargs)
+            perm_det.fit(X=combined[:n_ref])
+            perm_result, _ = perm_det.compare(X=combined[n_ref:])
+            if abs(float(perm_result.distance)) >= observed:
+                exceed += 1
+            del perm_det, perm_result
+        p_value = (exceed + 1) / (num_permutations + 1)
+        del combined
+        # defensive: large temporary arrays from repeated fit/compare calls were observed to
+        # inflate process RSS well beyond what Python's normal GC cadence reclaimed promptly
+        gc.collect()
+        return observed, p_value
+
     def __runDistanceTest(self, building_id, test, detector_cls, **extra_kwargs):
         p_vals, drifted = [], []
         for i in range(len(self.column_names)):
-            callback = PermutationTestDistanceBased(num_permutations=self.PERMUTATIONS, num_jobs=-1,
-                                                      random_state=0, name='perm')
-            det = detector_cls(callbacks=[callback], **extra_kwargs)
-            det.fit(X=self.ref[:, i])
-            _, logs = det.compare(X=self.cur[:, i])
-            p_val = float(logs['perm']['p_value'])
+            _, p_val = self.__permutationPValue(self.ref[:, i], self.cur[:, i], detector_cls, extra_kwargs, self.PERMUTATIONS)
             p_vals.append(p_val)
             drifted.append(bool(p_val < self.ALPHA))
 
@@ -492,17 +526,13 @@ class Frouros(Tool):
         return my_dict
 
     def __runMMD(self, building_id):
-        callback = PermutationTestDistanceBased(num_permutations=self.MMD_PERMUTATIONS, num_jobs=-1,
-                                                  random_state=0, name='perm')
-        det = FrourosMMD(chunk_size=self.MMD_CHUNK_SIZE, callbacks=[callback])
-        det.fit(X=self.ref)
-        result, logs = det.compare(X=self.cur)
-        p_val = float(logs['perm']['p_value'])
+        distance, p_val = self.__permutationPValue(self.ref, self.cur, FrourosMMD,
+                                                     {'chunk_size': self.MMD_CHUNK_SIZE}, self.MMD_PERMUTATIONS)
         drifted = bool(p_val < self.ALPHA)
         my_dict = {
             'drift_score': p_val,
             'is_drifted': drifted,
-            'distance': float(result.distance),
+            'distance': distance,
             # unlike AlibiDetect.MMD, these equal n_ref_total/n_cur_total -- full window, no subsampling
             'n_ref_used': len(self.ref),
             'n_cur_used': len(self.cur),
