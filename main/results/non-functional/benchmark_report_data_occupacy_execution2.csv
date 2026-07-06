@@ -1,0 +1,6 @@
+time,building,tool,showReport,test,runtime_avg,runtime_max,cpu_runtime_avg,cpu_runtime_max,ram_avg,ram_max,run_on_vm,n_ref_used,n_cur_used,n_ref_total,n_cur_total,all_col_drift_score,all_col_is_drifted,Unnamed: 0_drift_score,Unnamed: 0_is_drifted,measured_drift_score,measured_is_drifted,co2_drift_score,co2_is_drifted,temperature_drift_score,temperature_is_drifted
+2026-07-06 13:19:12,1,AlibiDetect,True,Least-Squares Density Difference,6848.559665679932,6848.559665679932,10859.7738798,10859.7738798,0,0,False,2000.0,2000.0,16091.0,30464.0,0.0,1.0,,,,,,,,
+2026-07-06 13:19:12,1,AlibiDetect,True,K-S Test,6848.559665679932,6848.559665679932,10859.7738798,10859.7738798,0,0,False,,,,,,,0.0,1.0,0.863774299621582,0.0,0.0,1.0,0.0,1.0
+2026-07-06 13:19:12,1,AlibiDetect,True,Cramer-von-Mises,6848.559665679932,6848.559665679932,10859.7738798,10859.7738798,0,0,False,,,,,,,5.332431669557991e-07,1.0,2.5329629238513007e-07,1.0,7.085890274538542e-08,1.0,2.871710194085608e-07,1.0
+2026-07-06 13:19:12,1,AlibiDetect,True,Maximum Mean Discrepancy,6848.559665679932,6848.559665679932,10859.7738798,10859.7738798,0,0,False,2000.0,2000.0,16091.0,30464.0,0.0,1.0,,,,,,,,
+2026-07-06 13:19:12,1,AlibiDetect,True,Spot-the-diff,6848.559665679932,6848.559665679932,10859.7738798,10859.7738798,0,0,False,,,,,0.0,1.0,,,,,,,,
