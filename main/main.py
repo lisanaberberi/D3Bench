@@ -9,6 +9,7 @@ import Dataset
 from Dataset import Data_Occupacy
 from Dataset import Data_Energy
 import os
+import shutil
 
 def main():
     clean()
@@ -18,11 +19,11 @@ def main():
     energy = False 
 
     # 2. select the tools
-    tools = {Evidently("Evidently", False), Evidently("Evidently", True),
-              NannyML("NannyML", False), NannyML("NannyML", True),
-              AlibiDetect("AlibiDetect", True),
-              Frouros("Frouros", True),
-              River("River", True)}
+    tools = {Evidently("Evidently", False), 
+              NannyML("NannyML", False),
+              AlibiDetect("AlibiDetect", False),
+              Frouros("Frouros", False), #memory peak issue
+              River("River", False)}
 
     # 3. select criteria
     # NOTE: Criteria.STORAGE is left out by default. It measures RAM via memory_profiler's
@@ -62,7 +63,14 @@ def runBenchmark(buildings = {1}, tests=[Criteria.FUNCTIONAL, Criteria.RUNTIME, 
 
 # delete all reports
 def clean():
-    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', 'reports')
+    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+    reports_dir = os.path.join(results_dir, 'reports')
+
+    # non-functional/ and functional/ accumulate one CSV per Benchmark.runBenchmark() call with no
+    # cap, so leftover files from a previous (or overlapping) run stay mixed in with the current
+    # one and the execution numbering no longer means what it implies -- clear both every run
+    for sub in ('non-functional', 'functional'):
+        shutil.rmtree(os.path.join(results_dir, sub), ignore_errors=True)
     evidently_tests = {'kolmogorov_smirnov', 'anderson', 'cramer_von_mises', 'ed', 'es', 'hellinger',
              'jensenshannon', 'kl_div', 'mannw', 'psi', 't_test', 'wasserstein'}
     nannyml_tests = {'kolmogorov_smirnov', 'wasserstein', 'jensen_shannon', 'hellinger'}
