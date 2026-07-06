@@ -1,6 +1,7 @@
 from datetime import datetime
 import time
 from enum import Enum
+import glob
 import pandas as pd
 from memory_profiler import memory_usage
 import json
@@ -268,3 +269,33 @@ class Benchmark:
         # compute average storage
         self.ram_avg = sum(mem) / len(mem)
         self.ram_max = max(mem)
+
+# Combines every per-tool report for a dataset (the many results/non-functional/*execution*.csv
+# files, one per tool instance, plus results/functional/<dataset>/benchmark_report.csv if it
+# exists) into a single results/summary_<dataset>.csv. Columns are the union of whatever each
+# source has -- NaN where a column doesn't apply -- so nothing is collapsed/aggregated;
+def summarize(dataset_name):
+    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+    frames = []
+
+    non_functional_pattern = os.path.join(results_dir, 'non-functional', f'benchmark_report_{dataset_name}_execution*.csv')
+    for file_name in sorted(glob.glob(non_functional_pattern)):
+        df = pd.read_csv(file_name)
+        if not df.empty:
+            frames.append(df)
+
+    functional_path = os.path.join(results_dir, 'functional', dataset_name, 'benchmark_report.csv')
+    if os.path.exists(functional_path):
+        df = pd.read_csv(functional_path)
+        if not df.empty:
+            frames.append(df)
+
+    if not frames:
+        return None
+
+    summary_df = pd.concat(frames, ignore_index=True, sort=False)
+    summary_df = summary_df.sort_values(['tool', 'showReport', 'test']).reset_index(drop=True)
+
+    out_path = os.path.join(results_dir, f'summary_{dataset_name}.csv')
+    summary_df.to_csv(out_path, index=False)
+    return out_path

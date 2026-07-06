@@ -307,8 +307,8 @@ class AlibiDetect(Tool):
             if self.showReport:
                 self.__saveGlobalReport(building_id, test, score, drifted)
         elif test == 'mmd':
-            ref_sample = self.__subsample(self.ref)
-            cur_sample = self.__subsample(self.cur)
+            ref_sample = self.__subsample(np.asarray(self.ref, np.float32))
+            cur_sample = self.__subsample(np.asarray(self.cur, np.float32))
             cd = MMDDrift(x_ref = ref_sample)
             report_dict = cd.predict(cur_sample, return_p_val=True)
             score = report_dict['data']['p_val']
@@ -327,8 +327,8 @@ class AlibiDetect(Tool):
             if self.showReport:
                 self.__saveGlobalReport(building_id, test, score, drifted)
         elif test == 'lsdd':
-            ref_sample = self.__subsample(self.ref)
-            cur_sample = self.__subsample(self.cur)
+            ref_sample = self.__subsample(np.asarray(self.ref, np.float32))
+            cur_sample = self.__subsample(np.asarray(self.cur, np.float32))
             cd = LSDDDrift(x_ref = ref_sample)
             report_dict = cd.predict(cur_sample, return_p_val=True)
             score = report_dict['data']['p_val']

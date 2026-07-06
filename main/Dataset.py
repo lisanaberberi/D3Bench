@@ -22,8 +22,10 @@ class Data_Energy(Dataset):
     def preprocess(self):
         df = self.df
         if 'time' in df:
-            # convert to datetime
-            df['time'] = pd.to_datetime(df['time'])
+            # the raw CSV's `time` column is just the literal string "00:00.0" for every row (a
+            # broken export, not a real timestamp); ignore it and rebuild a real one from
+            # year/month/day/hour, which do hold correct per-row values
+            df['time'] = pd.to_datetime(df[['year', 'month', 'day', 'hour']])
 
             # drop duplicates
             df = df.drop_duplicates(["time", "ids"])
