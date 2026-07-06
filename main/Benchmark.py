@@ -3,7 +3,11 @@ import time
 from enum import Enum
 import pandas as pd
 from memory_profiler import memory_usage
+import json
 import os.path
+import subprocess
+import sys
+import tempfile
 
 class Criteria(Enum):
     FUNCTIONAL = 0
@@ -29,7 +33,41 @@ class Benchmark:
         self.driftDetectionStats = {}
         self.tool.dataset_name = type(dataset).__name__.lower()
 
+    # Runs the actual drift-detection work for this tool in its own short-lived subprocess
+    # (via runner.py) instead of in this long-lived process. Tool.py imports tensorflow, torch,
+    # evidently, nannyml, alibi-detect, frouros, and river all at module level, and running many
+    # tools' full benchmarks back-to-back in one shared process was observed to spike memory to
+    # 20-28GB (of 30GB total) and trigger an apparent kernel OOM-kill -- reproduced repeatedly even
+    # after ruling out joblib/multiprocessing and cutting workload size. Isolating each tool in its
+    # own process guarantees the OS reclaims whatever it allocated when that process exits,
+    # regardless of the underlying cause.
     def runBenchmark(self):
+        cfg = {
+            'tool_class': type(self.tool).__name__,
+            'tool_name': self.tool.name,
+            'show_report': self.tool.showReport,
+            'dataset_class': type(self.dataset).__name__,
+            'dataset_path': self.dataset.path,
+            'criteria': [c.name for c in self.criterias],
+            'buildings': list(self.buildings),
+            'vm': self.runOnVm,
+        }
+        runner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runner.py')
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(cfg, f)
+            config_path = f.name
+        try:
+            # stdout/stderr are inherited (not captured), so the child's report printout still
+            # shows up in the console exactly as if it ran in-process
+            result = subprocess.run([sys.executable, runner_path, '--config', config_path])
+            if result.returncode != 0:
+                print(f"WARNING: benchmark subprocess for {self.tool.name} exited with code "
+                      f"{result.returncode}; skipping to the next tool")
+        finally:
+            os.remove(config_path)
+
+    # called by runner.py from inside the isolated subprocess
+    def _executeInProcess(self):
         for criteria in self.criterias:
             if criteria == Criteria.FUNCTIONAL:
                 self.runFunctional()

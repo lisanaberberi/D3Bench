@@ -2,8 +2,9 @@ import pandas as pd # pip install pandas
 import numpy as np # pip install pandas
 
 class Dataset:
-     
+
     def __init__(self, path):
+        self.path = path
         self.df = pd.read_csv(path)
 
     def preprocess(self):
