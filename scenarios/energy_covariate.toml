@@ -1,0 +1,39 @@
+# D3Bench scenario: covariate drift on the smart-building Energy dataset.
+# Run with:  python3 main/main.py --scenario ../scenarios/energy_covariate.toml
+# (or from within main/:  python3 main.py --scenario ../scenarios/energy_covariate.toml)
+
+[scenario]
+name = "energy_covariate"
+description = """
+Hourly heat consumption (MWh) and outdoor temperature readings for a single
+building. Reference and current windows are split along the real time axis,
+so the drift observed is genuine seasonal/temporal variation rather than an
+injected perturbation -- there is no exact labeled onset index; ground truth
+is the split boundary itself.
+"""
+drift_type = "covariate"
+ground_truth = "real_temporal"
+
+[data]
+dataset = "energy"                 # key into DATASET_REGISTRY -> Data_Energy
+path = "data/energy_data.csv"      # resolved relative to the repo root
+building_id = 1
+split_boundary = "04-01-2020 00:00"  # reference: < boundary, current: >= boundary
+
+[run]
+tools = ["Evidently", "NannyML", "AlibiDetect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME"]
+# STORAGE (RAM via memory_profiler) is intentionally excluded: it forks this
+# process while Frouros/tensorflow/torch/etc are already imported, which
+# reproducibly spiked system memory to 20-28GB and triggered an apparent
+# kernel OOM-kill during scenario development. See main.py's runBenchmark
+# NOTE. RAM is therefore not reported for this scenario.
+show_report = true
+vm = false
+# runtime/cpu numbers below are a single measurement per tool, not an average: within one
+# `main.py --scenario ...` invocation, Benchmark writes one non-functional CSV per tool
+# (results/non-functional/benchmark_report_<dataset>_execution{1..5}.csv, one execution
+# number per tool in this 5-tool scenario -- NOT 5 repeats of the same tool). Re-running
+# scripts/execute_benchmark_5_times.sh on top of an existing 5-tool result set continues the
+# execution counter (6, 7, ...) rather than replacing it per tool, so repeated-measurement
+# statistics (mean/std runtime per tool) are not currently computable from these files as-is.

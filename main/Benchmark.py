@@ -49,6 +49,7 @@ class Benchmark:
             'show_report': self.tool.showReport,
             'dataset_class': type(self.dataset).__name__,
             'dataset_path': self.dataset.path,
+            'dataset_boundary': self.dataset.boundary,
             'criteria': [c.name for c in self.criterias],
             'buildings': list(self.buildings),
             'vm': self.runOnVm,

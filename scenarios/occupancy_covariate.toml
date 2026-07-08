@@ -1,0 +1,33 @@
+# D3Bench scenario: covariate drift on the smart-building Occupancy dataset.
+# Run with:  python3 main/main.py --scenario ../scenarios/occupancy_covariate.toml
+# (or from within main/:  python3 main.py --scenario ../scenarios/occupancy_covariate.toml)
+
+[scenario]
+name = "occupancy_covariate"
+description = """
+Building occupancy predictions against measured ground truth (predicted,
+measured, prob_predicted, plus co2/temperature covariates). As with the
+Energy scenario, reference and current windows are split along the real
+time axis: the drift is naturally occurring seasonal variation, not an
+injected perturbation.
+"""
+drift_type = "covariate"
+ground_truth = "real_temporal"
+
+[data]
+dataset = "occupancy"                # key into DATASET_REGISTRY -> Data_Occupacy
+path = "data/occupacy_data.csv"      # resolved relative to the repo root
+building_id = 1                      # NOTE: Data_Occupacy.splitTrainTest currently
+                                      # ignores building_id (single building in this
+                                      # dataset); kept here for schema consistency
+                                      # with the Energy scenario.
+split_boundary = "05-09-2021 00:00"  # reference: < boundary, current: >= boundary
+
+[run]
+tools = ["Evidently", "NannyML", "AlibiDetect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME"]
+# STORAGE excluded -- see energy_covariate.toml for why.
+show_report = true
+vm = false
+# NOTE: runtime/cpu numbers are a single measurement per tool, not an average over repeats --
+# see the matching note in energy_covariate.toml for the execution-numbering caveat.
