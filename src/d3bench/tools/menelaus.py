@@ -15,7 +15,7 @@ class BaseStreamingDetector(utils.BaseTestMethod, ABC):
     """Base class for online concept drift detectors."""
 
     def __init__(self, features: list[str]) -> None:
-        self.detector = self.detector_class(self.config)
+        self.detector = self.detector_class(**self.config)
         self.features = features
         self.drift: bool
 
@@ -209,7 +209,7 @@ class BaseHistogramDensityMethod(utils.BaseTestMethod, ABC):
     """Base class for online concept drift detectors."""
 
     def __init__(self, features: list[str]) -> None:
-        self.detector = self.detector_class(self.config)
+        self.detector = self.detector_class(**self.config)
         self.features = features
         self.drift: bool
 
