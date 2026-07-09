@@ -1,0 +1,112 @@
+[
+    [
+        {
+            "method": "Chi-square Test",
+            "method_class": "<class 'd3bench.tools.alibi.ChiSquareTest'>",
+            "test_information": {
+                "framework": "Alibi-Detect",
+                "run_on_vm": false,
+                "repetitions": 3,
+                "len_reference": 96496,
+                "len_testing": 8644
+            },
+            "time": "2026-07-09T11:51:02.011917",
+            "runtime": {
+                "avg": 0.028535127639770508,
+                "max": 0.028738737106323242,
+                "min": 0.028359651565551758
+            },
+            "cputime": {
+                "avg": 0.027284421000000354,
+                "max": 0.0275558139999994,
+                "min": 0.027090480000000028
+            },
+            "memory": {
+                "avg": 1413.796875,
+                "max": 1413.796875,
+                "min": 1413.796875
+            }
+        },
+        {
+            "method": "Kolmogorov-Smirnov Test",
+            "method_class": "<class 'd3bench.tools.alibi.KolmogorovSmirnovTest'>",
+            "test_information": {
+                "framework": "Alibi-Detect",
+                "run_on_vm": false,
+                "repetitions": 3,
+                "len_reference": 96496,
+                "len_testing": 8644
+            },
+            "time": "2026-07-09T11:51:02.510920",
+            "runtime": {
+                "avg": 0.011543512344360352,
+                "max": 0.012040853500366211,
+                "min": 0.011276006698608398
+            },
+            "cputime": {
+                "avg": 0.011002573000000146,
+                "max": 0.011032578000000015,
+                "min": 0.010952036000000831
+            },
+            "memory": {
+                "avg": 1413.9296875,
+                "max": 1413.9296875,
+                "min": 1413.9296875
+            }
+        },
+        {
+            "method": "Cram\u00e9r-von Mises Test",
+            "method_class": "<class 'd3bench.tools.alibi.CramerVonMisesTest'>",
+            "test_information": {
+                "framework": "Alibi-Detect",
+                "run_on_vm": false,
+                "repetitions": 3,
+                "len_reference": 96496,
+                "len_testing": 8644
+            },
+            "time": "2026-07-09T11:51:03.045624",
+            "runtime": {
+                "avg": 0.014135996500651041,
+                "max": 0.017291545867919922,
+                "min": 0.01246786117553711
+            },
+            "cputime": {
+                "avg": 0.01276278466666684,
+                "max": 0.013011169000000322,
+                "min": 0.012458137999999508
+            },
+            "memory": {
+                "avg": 1414.0390625,
+                "max": 1414.0390625,
+                "min": 1414.0390625
+            }
+        },
+        {
+            "method": "Mixed-Type Tabular Data",
+            "method_class": "<class 'd3bench.tools.alibi.MixedTypeTabularData'>",
+            "test_information": {
+                "framework": "Alibi-Detect",
+                "run_on_vm": false,
+                "repetitions": 3,
+                "len_reference": 96496,
+                "len_testing": 8644
+            },
+            "time": "2026-07-09T11:51:03.555870",
+            "runtime": {
+                "avg": 0.011435270309448242,
+                "max": 0.011907815933227539,
+                "min": 0.011156082153320312
+            },
+            "cputime": {
+                "avg": 0.011144406999999745,
+                "max": 0.011171880999999217,
+                "min": 0.011123787999999024
+            },
+            "memory": {
+                "avg": 1414.05078125,
+                "max": 1414.05078125,
+                "min": 1414.05078125
+            }
+        }
+    ]
+]
