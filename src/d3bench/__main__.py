@@ -8,9 +8,9 @@ whether to run on a VM, the dataset to use, and the logging level.
 
 import datetime as dt
 import logging
-from typing import Literal, TypeAlias
+from typing import Literal, Optional, TypeAlias
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import SettingsConfigDict
 from rich.logging import RichHandler
 
@@ -56,10 +56,19 @@ class Arguments(BaseArguments):
         default="energy",
         description="Dataset file name to use.",
     )
-    output: str = Field(
-        default=f"results_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}",
-        description="File to save the results to.",
+    output: Optional[str] = Field(
+        default=None,
+        description="File to save the results to. Defaults to 'results_<tools>_<timestamp>'.",
     )
+
+    @model_validator(mode="after")
+    def set_default_output(self) -> "Arguments":
+        """Derive the output file name from the selected tools if not set explicitly."""
+        if self.output is None:
+            tools_slug = "_".join(sorted(tool.lower().replace("-", "") for tool in self.tools))
+            timestamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+            self.output = f"results_{tools_slug}_{timestamp}"
+        return self
 
 
 def main(args: Arguments) -> None:
