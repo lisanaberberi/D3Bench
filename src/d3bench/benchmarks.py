@@ -170,16 +170,34 @@ class Benchmark(BaseBenchmark):
         return reports.Stats.from_values(mems)
 
 
+def _try_report(method: Method, test: Test, tool: Tool, criteria: set[Criteria]) -> Optional[Report]:
+    """Run one method's benchmark, or return None if it fails.
+
+    A single incompatible method/column combination (e.g. a statistical
+    test whose preconditions the data doesn't satisfy) shouldn't take down
+    every other method and framework in the same run.
+    """
+    try:
+        return Benchmark(method, test, tool).report(criteria)
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Skipping %s/%s: benchmark failed", tool.name, method)
+        return None
+
+
 def get_reports(tool: Tool, criteria: set[Criteria]) -> Generator[Report, None, None]:
     """Return the drift detection values."""
     for method, test in tool.online_cd_methods.items():
-        yield Benchmark(method, test, tool).report(criteria)
+        if report := _try_report(method, test, tool, criteria):
+            yield report
     for method, test in tool.online_dd_methods.items():
-        yield Benchmark(method, test, tool).report(criteria)
+        if report := _try_report(method, test, tool, criteria):
+            yield report
     for method, test in tool.batch_cd_methods.items():
-        yield Benchmark(method, test, tool).report(criteria)
+        if report := _try_report(method, test, tool, criteria):
+            yield report
     for method, test in tool.batch_dd_methods.items():
-        yield Benchmark(method, test, tool).report(criteria)
+        if report := _try_report(method, test, tool, criteria):
+            yield report
 
 
 class Job:
