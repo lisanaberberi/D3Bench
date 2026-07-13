@@ -71,13 +71,29 @@ class BaseBenchmark(ABC):
     def get_memories(self) -> reports.Stats:
         """Run the benchmark for the MEMORY criterion."""
 
+    def get_functional(self) -> Optional[dict[str, bool]]:
+        """Return whether drift was flagged on each monitored column.
+
+        Each detector's `result()` exposes a "drift" entry that is either a
+        single bool (methods that only look at the combined feature signal)
+        or a dict keyed by column (methods that test each feature
+        separately). A single bool is broadcast to every monitored column so
+        the "functional" criterion always yields a per-column mapping.
+        """
+        drift = self.get_results().get("drift")
+        if drift is None:
+            return None
+        if isinstance(drift, dict):
+            return {column: bool(value) for column, value in drift.items()}
+        return {feature: bool(drift) for feature in self.data.features}
+
     def report(self, criteria: set[Criteria]) -> Report:
         """Return the drift detection values."""
-        # TODO: Future implementation; add results to report types
         return reports.Report(
             runtime=self.get_runtimes() if "runtime" in criteria else None,
             cputime=self.get_cputimes() if "cputime" in criteria else None,
             memory=self.get_memories() if "memory" in criteria else None,
+            functional=self.get_functional() if "functional" in criteria else None,
             test_information=TestInformation(
                 framework=self.tool.name,
                 run_on_vm=self.run_on_vm,

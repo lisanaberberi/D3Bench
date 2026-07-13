@@ -74,6 +74,9 @@ class Report(BaseModel):
     runtime: Optional[Stats] = Field(None, description="Runtime statistics")
     cputime: Optional[Stats] = Field(None, description="CPU time statistics")
     memory: Optional[Stats] = Field(None, description="Memory usage statistics")
+    functional: Optional[Dict[str, bool]] = Field(
+        None, description="Whether drift was flagged on each monitored column"
+    )
 
 
 class OnlineCDReport(Report):

@@ -1,6 +1,7 @@
 import datetime as dt
 from abc import ABC, abstractmethod
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 import pandas as pd
 from pydantic import Field
@@ -35,9 +36,9 @@ class Dataset(ABC):
     file_name: str
     measure_columns: list[str]
 
-    def __init__(self, settings: Optional[Options] = None):
+    def __init__(self, settings: Optional[Options] = None, path: Optional[Union[str, Path]] = None):
         settings = settings or Options()
-        self.df: pd.DataFrame = pd.read_csv(config.data_path / self.file_name, low_memory=False)
+        self.df: pd.DataFrame = pd.read_csv(path or config.data_path / self.file_name, low_memory=False)
         self.df["time"] = self.preprocess_time()
         self.data_start = settings.data_start
         self.data_end = settings.data_end
@@ -91,3 +92,18 @@ class DataEnergy(Dataset):
         """Merge date and time columns to datetime column."""
         datetime = self.df[DataEnergy.datetime_columns]
         return pd.to_datetime(datetime)
+
+
+class DataOccupancy(Dataset):
+    """Class for the occupancy dataset."""
+
+    file_name = "occupancy_data.csv"
+    measure_columns = ["measured", "co2", "temperature"]
+
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+        self.df = self.df[self.measure_columns + ["time"]]
+
+    def preprocess_time(self) -> pd.DataFrame:
+        """Parse the time column to a datetime column."""
+        return pd.to_datetime(self.df["time"])

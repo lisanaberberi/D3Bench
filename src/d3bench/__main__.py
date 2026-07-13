@@ -8,6 +8,7 @@ whether to run on a VM, the dataset to use, and the logging level.
 
 import datetime as dt
 import logging
+from pathlib import Path
 from typing import Literal, Optional, TypeAlias
 
 from pydantic import Field, model_validator
@@ -16,6 +17,7 @@ from rich.logging import RichHandler
 
 import d3bench
 from d3bench import Criteria, Datafile, Framework
+from d3bench.scenario import Scenario
 from d3bench.utils import BaseArguments
 
 # pylint: disable=too-few-public-methods
@@ -44,6 +46,13 @@ class Arguments(BaseArguments):
         default="info",
         description="Logging level.",
     )
+    scenario: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Path to a scenario TOML file (e.g. scenarios/energy_covariate.toml). "
+            "When set, this takes precedence over --datafile/--tools/--criteria."
+        ),
+    )
     criteria: set[Criteria] = Field(
         default=set(["runtime", "cputime", "memory"]),
         description="Criteria to test.",
@@ -63,11 +72,14 @@ class Arguments(BaseArguments):
 
     @model_validator(mode="after")
     def set_default_output(self) -> "Arguments":
-        """Derive the output file name from the selected tools if not set explicitly."""
+        """Derive the output file name from the scenario/tools if not set explicitly."""
         if self.output is None:
-            tools_slug = "_".join(sorted(tool.lower().replace("-", "") for tool in self.tools))
             timestamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
-            self.output = f"results_{tools_slug}_{timestamp}"
+            if self.scenario is not None:
+                slug = self.scenario.stem
+            else:
+                slug = "_".join(sorted(tool.lower().replace("-", "") for tool in self.tools))
+            self.output = f"results_{slug}_{timestamp}"
         return self
 
 
@@ -82,13 +94,18 @@ def main(args: Arguments) -> None:
     )
     logger.debug("Call arguments: %s", args)
 
-    logger.info("Loading dataset and tools from d3bench")
-    data = d3bench.DATASETS[args.datafile].split_data()
-    tools = [d3bench.TOOLS[tool](data) for tool in args.tools]
+    if args.scenario is not None:
+        logger.info("Loading scenario from %s", args.scenario)
+        scenario = Scenario.from_toml(args.scenario)
+        results = scenario.run_benchmark()
+    else:
+        logger.info("Loading dataset and tools from d3bench")
+        data = d3bench.DATASETS[args.datafile].split_data()
+        tools = [d3bench.TOOLS[tool](data) for tool in args.tools]
 
-    logger.info("Loading the benchmarks with the given criteria")
-    logger.debug("Criteria: %s", args.criteria)
-    results = d3bench.Results(tools, args.criteria)
+        logger.info("Loading the benchmarks with the given criteria")
+        logger.debug("Criteria: %s", args.criteria)
+        results = d3bench.Results(tools, args.criteria)
     logger.debug("Results: %s", results)
 
     logger.info("Saving the results to the output file")

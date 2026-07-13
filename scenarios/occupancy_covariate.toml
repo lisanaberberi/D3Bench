@@ -1,0 +1,10 @@
+[data]
+dataset = "occupancy"
+path = "datafiles/occupancy_data.csv"
+split_boundary = "05-09-2021 00:00"
+
+[run]
+tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME"]
+show_report = true
+vm = false

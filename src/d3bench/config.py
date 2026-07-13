@@ -44,8 +44,12 @@ Datafile: TypeAlias = Literal[
 
 # Define the criteria evaluations for the benchmark
 Criteria: TypeAlias = Literal[
-    "accuracy",
+    "functional",
     "runtime",
     "cputime",
     "memory",
 ]
+
+# Significance level used to turn a p-value into a drift/no-drift decision
+# for the "functional" criterion (see Report.functional).
+SIGNIFICANCE_LEVEL = 0.05

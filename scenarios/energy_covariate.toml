@@ -1,0 +1,11 @@
+[data]
+dataset = "energy"
+path = "datafiles/energy_data.csv"
+building_id = 1
+split_boundary = "04-01-2020 00:00"
+
+[run]
+tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME"]
+show_report = true
+vm = false
