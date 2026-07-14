@@ -1,15 +1,47 @@
 """Module for Frouros detectors."""
 
-from typing import Any
+from typing import Any, Optional
 
 from abc import ABC, abstractmethod
+from frouros.callbacks.batch import PermutationTestDistanceBased
 from frouros.detectors import concept_drift, data_drift
 import numpy as np
 
 from d3bench import utils
+from d3bench.config import SIGNIFICANCE_LEVEL
 from frouros.utils.kernels import rbf_kernel
 
+from scipy.stats import PermutationMethod
+
 # TODO: Might be interesting to move all configurations to a toml file
+
+# Settings for the permutation test that supplies a p-value (and thus an
+# is-drifted decision) to the otherwise threshold-free distance-based batch
+# detectors. `num_permutations` bounds the achievable p-value from below at
+# 1 / (num_permutations + 1), so it must sit comfortably under
+# SIGNIFICANCE_LEVEL: at 20 the floor is 0.0476 against a 0.05 threshold,
+# leaving the test with effectively no resolution. 100 gives a floor of 0.0099.
+# It also multiplies detector runtime by roughly this factor.
+_PERMUTATION_TEST_KWARGS: dict[str, Any] = {
+    "num_permutations": 100,
+    "random_state": 31,
+}
+ 
+# Seed shared by every stochastic component in this module.
+_SEED = 31
+ 
+ 
+def _permutation_test() -> PermutationTestDistanceBased:
+    """Build a *fresh* permutation-test callback.
+ 
+    Never share one instance between detectors. `frouros.callbacks.BaseCallback`
+    carries per-instance `detector` and `logs` state, and `compare()` returns
+    that `logs` dict *by reference*. A module-level singleton therefore makes
+    every per-feature detector alias the same dict, so all features report
+    whichever p-value was computed last -- a silent, total false-negative.
+    """
+    return PermutationTestDistanceBased(**_PERMUTATION_TEST_KWARGS)
+
 
 
 # Online Concept Drift Detection
@@ -264,6 +296,10 @@ class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
         return {
             "distances": [self.results[i].statistic for i, _ in enumerate(self.features)],
             "p_values": [self.results[i].p_value for i, _ in enumerate(self.features)],
+            "drift": {
+                feature: self.results[i].p_value < SIGNIFICANCE_LEVEL
+                for i, feature in enumerate(self.features)
+            },
         }
 
 
@@ -274,44 +310,101 @@ class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
 
 
 class BaseBatchDD(utils.BaseTestMethod, ABC):
-    """Base class for batch data drift detectors."""
+    """Base class for batch data drift detectors.
 
+    One detector is built per feature. Subclasses declare their behaviour with
+    three class attributes rather than having it inferred at runtime.
+    """
+ 
+    #: True for detectors whose `compare` returns a bare distance (EMD, MMD, PSI,
+    #: KL, ...). A distance has no null distribution, so its p-value must come
+    #: from a permutation-test callback. False for the statistical tests (KS,
+    #: Welch, Mann-Whitney, ...), which carry a p-value on the result object.
+    distance_based: bool = False
+ 
+    #: Cap on samples per side; None uses the full split. Needed by detectors
+    #: that are super-linear in n (see BatchMaximumMeanDiscrepancy).
+    max_samples: Optional[int] = None
+ 
+    #: Extra kwargs forwarded to compare() -> _compare() -> _statistical_test().
+    #: REBIND in subclasses (`compare_kwargs = {...}`); never mutate in place --
+    #: this is a class attribute shared by every subclass that doesn't override it.
+    compare_kwargs: dict[str, Any] = {}
+ 
     def __init__(self, features: list[str]) -> None:
-        self.detectors = [self.detector_class(**self.config) for _ in features]
         self.features = features
+        self.detectors = [self._build_detector() for _ in features]
         self.results: list[Any] = []
 
     @property
     @abstractmethod
     def config(self) -> Any:
         """Property that returns the detector configuration."""
-
+ 
     @property
     @abstractmethod
     def detector_class(self) -> Any:
         """Property that returns the detector class."""
-
+ 
+    def _build_detector(self) -> Any:
+        """Instantiate one detector, with its own permutation-test callback if needed."""
+        config = dict(self.config)
+        if self.distance_based:
+            config["callbacks"] = _permutation_test()
+        return self.detector_class(**config)
+ 
+    def _subsample(self, x: np.ndarray) -> np.ndarray:
+        """Draw at most `max_samples` rows, deterministically.
+ 
+        Reseeded on every call: `test()` runs 7x per method under the default
+        scenario (3 runtime repetitions + 3 cpu-runtime + 1 functional), so a
+        stateful rng would hand each pass a different draw and the reported
+        functional result would come from the last one.
+        """
+        if self.max_samples is None or len(x) <= self.max_samples:
+            return x
+        rng = np.random.default_rng(seed=_SEED)
+        return x[rng.choice(len(x), size=self.max_samples, replace=False)]
+ 
     def fit(self, x_reference: np.ndarray) -> None:
+        x_reference = self._subsample(x_reference)
         for i, _ in enumerate(self.features):
-            self.detectors[i].fit(X=x_reference[i])
-
+            self.detectors[i].fit(X=x_reference[:, i])
+ 
     def test(self, x_test: np.ndarray) -> None:
+        x_test = self._subsample(x_test)
         self.results = [
-            self.detectors[i].compare(X=x_test[i])
+            self.detectors[i].compare(X=x_test[:, i], **self.compare_kwargs)
             for i, _ in enumerate(self.features)
-        ] # fmt: skip
-
+        ]
+ 
+    def _p_value(self, index: int) -> float:
+        """Statistical tests carry their own p-value; distance-based detectors
+        take theirs from the permutation-test callback log."""
+        stat_result, callback_logs = self.results[index]
+        if self.distance_based:
+            return callback_logs[PermutationTestDistanceBased.__name__]["p_value"]
+        return stat_result.p_value
+ 
     def result(self) -> dict[str, Any]:
-        return {"results": self.results}
-
+        p_values = [self._p_value(i) for i, _ in enumerate(self.features)]
+        return {
+            "results": self.results,
+            "p_values": p_values,
+            "drift": {
+                feature: p_value < SIGNIFICANCE_LEVEL
+                for feature, p_value in zip(self.features, p_values)
+            },
+        }
+ 
 
 class BhattacharyyaDistance(BaseBatchDD):
     """Bhattacharyya Distance"""
 
     detector_class = data_drift.BhattacharyyaDistance
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
     }
 
 
@@ -319,47 +412,49 @@ class EarthMoverDistance(BaseBatchDD):
     """Earth Mover's Distance"""
 
     detector_class = data_drift.EMD
-    config = {
-        "callbacks": None,
-    }
+    distance_based = True
+    config: dict[str, Any] = {}
+
 
 
 class EnergyDistance(BaseBatchDD):
     """Energy Distance"""
 
     detector_class = data_drift.EnergyDistance
-    config = {
-        "callbacks": None,
-    }
+    distance_based = True
+    config: dict[str, Any] = {}
+
 
 
 class HellingerDistance(BaseBatchDD):
     """Hellinger Distance"""
 
     detector_class = data_drift.HellingerDistance
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
     }
+
 
 
 class HistogramIntersectionNormalizedComplement(BaseBatchDD):
     """Histogram Intersection Normalized Complement"""
 
     detector_class = data_drift.HINormalizedComplement
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
     }
+
 
 
 class JensenShannonDivergenceDriftDetection(BaseBatchDD):
     """Jensen-Shannon Divergence Drift Detection"""
 
     detector_class = data_drift.JS
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
     }
 
 
@@ -367,21 +462,31 @@ class KullbackLeiblerDivergenceDriftDetection(BaseBatchDD):
     """Kullback-Leibler Divergence Drift Detection"""
 
     detector_class = data_drift.KL
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
     }
+
 
 
 class BatchMaximumMeanDiscrepancy(BaseBatchDD):
     """Maximum Mean Discrepancy"""
 
     detector_class = data_drift.MMD
+    distance_based = True
     config = {
         "kernel": rbf_kernel,  # Kernel function
         "chunk_size": 1000,  # Chunk size value
-        "callbacks": None,
     }
+
+
+    # The RBF kernel matrix between reference and test is O(n_reference *
+    # n_test); combined with the 20-permutation test above, this is measured
+    # to scale quadratically (~4.8s at n=1000 per side, ~102s at n=8000 --
+    # extrapolating to Energy's real 35k/70k split gives multi-hour runtimes
+    # per feature). Subsample both sides before computing it, which is the
+    # standard mitigation for kernel two-sample tests on large samples.
+    _max_samples = 1000
 
 
 class PopulationStabilityIndex(BaseBatchDD):
@@ -390,7 +495,7 @@ class PopulationStabilityIndex(BaseBatchDD):
     detector_class = data_drift.PSI
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": None,
+        "callbacks": _PERMUTATION_TEST,
     }
 
 
@@ -410,6 +515,13 @@ class BaumgartnerWeissSchindlerTest(BaseBatchDD):
     config = {
         "callbacks": None,
     }
+    
+    # scipy's bws_test has no asymptotic null, so method=None falls back to
+    # PermutationMethod(n_resamples=9999) *unbatched*, which materialises a
+    # (9999, n_ref + n_test) float64 array -- ~21 GB at Occupancy's 16k/30k
+    # split, i.e. an OOM. batch= bounds the working set; 999 resamples still
+    # gives a p-value floor of 0.001.
+    compare_kwargs = {"method": PermutationMethod(n_resamples=999, batch=50, random_state=31)}
 
 
 class ChiSquareTest(BaseBatchDD):
