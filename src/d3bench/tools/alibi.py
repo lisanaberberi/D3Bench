@@ -34,11 +34,20 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     def fit(self, x_reference: np.ndarray) -> None:
         self.detector = self.detector_class(x_reference, **self.config)
 
+    # def test(self, x_test: np.ndarray) -> None:
+    #     self.drift = self.detector.predict(x_test)
     def test(self, x_test: np.ndarray) -> None:
-        self.drift = self.detector.predict(x_test)
+    # Online detectors consume ONE instance per predict() call; the sliding
+    # window advances internally. Feeding the whole array raises a shape
+    # error. Keep the last verdict as the stream's outcome (is_drift latches).
+        for x in x_test:
+            self.drift = self.detector.predict(x)
 
+    # def result(self) -> dict[str, Any]:
+    #     raise NotImplementedError("Method not implemented.")
     def result(self) -> dict[str, Any]:
-        raise NotImplementedError("Method not implemented.")
+        is_drift = bool(self.drift["data"]["is_drift"])   # scalar for the stream
+        return {"drift": {feature: is_drift for feature in self.features}}
 
 
 class OnlineMaximumMeanDiscrepancy(BaseUniOnlineTest):
