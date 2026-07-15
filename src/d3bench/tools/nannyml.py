@@ -9,6 +9,21 @@ import pandas as pd
 from d3bench import utils
 
 
+def _alert_per_feature(results: Any, method: str, features: list[str]) -> dict[str, bool]:
+    """Return, per feature, whether any chunk of the tested window alerted.
+
+    A feature is left out if this method was never applicable to it (e.g. a
+    categorical method run against a continuous column), so it does not
+    count towards the "functional" denominator for that column.
+    """
+    df = results.to_df()
+    return {
+        feature: bool(df[(feature, method, "alert")].any())
+        for feature in features
+        if (feature, method, "alert") in df.columns
+    }
+
+
 # Univariate Continuous Data Drift Detection
 
 
@@ -16,6 +31,7 @@ class BaseUnivariateContinuous(utils.BaseTestMethod, ABC):
     """Base class for batch data drift detectors."""
 
     def __init__(self, features: list[str]) -> None:
+        self.features = features
         self.detector = nml.UnivariateDriftCalculator(
             column_names=features,
             chunk_number=None,
@@ -36,7 +52,7 @@ class BaseUnivariateContinuous(utils.BaseTestMethod, ABC):
         self.results = self.detector.calculate(x_test)
 
     def result(self) -> dict[str, Any]:
-        raise NotImplementedError
+        return {"drift": _alert_per_feature(self.results, self.detector_reference, self.features)}
 
 
 class JensenShannonDivergenceDriftDetection(BaseUnivariateContinuous):
@@ -70,6 +86,7 @@ class BaseUnivariateCategorical(utils.BaseTestMethod, ABC):
     """Base class for batch data drift detectors."""
 
     def __init__(self, features: list[str]) -> None:
+        self.features = features
         self.detector = nml.UnivariateDriftCalculator(
             column_names=features,
             chunk_number=None,
@@ -90,7 +107,7 @@ class BaseUnivariateCategorical(utils.BaseTestMethod, ABC):
         self.results = self.detector.calculate(x_test)
 
     def result(self) -> dict[str, Any]:
-        raise NotImplementedError
+        return {"drift": _alert_per_feature(self.results, self.detector_reference, self.features)}
 
 
 # class JensenShannonDivergenceDriftDetection(BaseUnivariateCategorical):
