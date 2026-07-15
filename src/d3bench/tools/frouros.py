@@ -23,7 +23,7 @@ from scipy.stats import PermutationMethod
 # leaving the test with effectively no resolution. 100 gives a floor of 0.0099.
 # It also multiplies detector runtime by roughly this factor.
 _PERMUTATION_TEST_KWARGS: dict[str, Any] = {
-    "num_permutations": 100,
+    "num_permutations": 50,
     "random_state": 31,
 }
  
@@ -486,17 +486,18 @@ class BatchMaximumMeanDiscrepancy(BaseBatchDD):
     # extrapolating to Energy's real 35k/70k split gives multi-hour runtimes
     # per feature). Subsample both sides before computing it, which is the
     # standard mitigation for kernel two-sample tests on large samples.
-    _max_samples = 1000
+    max_samples = 1000
 
 
 class PopulationStabilityIndex(BaseBatchDD):
     """Population Stability Index"""
 
     detector_class = data_drift.PSI
+    distance_based = True
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
-        "callbacks": _PERMUTATION_TEST,
     }
+
 
 
 class AndersonDarlingTest(BaseBatchDD):
@@ -506,6 +507,12 @@ class AndersonDarlingTest(BaseBatchDD):
     config = {
         "callbacks": None,
     }
+    
+    # NOTE: scipy's anderson_ksamp interpolates its p-value from a table covering
+    # only [0.001, 0.25] and warns when it clamps. Both clamps fall outside the
+    # 0.05 decision boundary, so the drift verdict is unaffected -- but a reported
+    # p of 0.001 means "<= 0.001", which matters if these numbers reach a table.
+
 
 
 class BaumgartnerWeissSchindlerTest(BaseBatchDD):
@@ -521,7 +528,9 @@ class BaumgartnerWeissSchindlerTest(BaseBatchDD):
     # (9999, n_ref + n_test) float64 array -- ~21 GB at Occupancy's 16k/30k
     # split, i.e. an OOM. batch= bounds the working set; 999 resamples still
     # gives a p-value floor of 0.001.
-    compare_kwargs = {"method": PermutationMethod(n_resamples=999, batch=50, random_state=31)}
+    compare_kwargs = {"method": PermutationMethod(n_resamples=999, batch=50, random_state=_SEED),
+    }
+
 
 
 class ChiSquareTest(BaseBatchDD):
