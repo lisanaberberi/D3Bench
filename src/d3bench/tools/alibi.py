@@ -142,7 +142,7 @@ class BaseSpecialOnlineTests(utils.BaseTestMethod, ABC):
         raise NotImplementedError("Method not implemented.")
 
 
-# Concept Drift Univariate Detector Methods
+# Batch Data Drift Univariate Detector Methods
 
 
 class BaseUnivariateTest(utils.BaseTestMethod, ABC):
@@ -177,7 +177,8 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         self.drift = self.detector.predict(x_test, drift_type="feature")
 
     def result(self) -> dict[str, Any]:
-        return NotImplementedError("Method not implemented.")
+        is_drift = self.drift["data"]["is_drift"]
+        return {"drift": {feature: bool(is_drift[i]) for i, feature in enumerate(self.features)}}
 
 
 class ChiSquareTest(BaseUnivariateTest):
