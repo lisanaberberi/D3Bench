@@ -5,6 +5,5 @@ split_boundary = "05-09-2021 00:00"
 
 [run]
 tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
-criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME"]
-show_report = true
+criteria = ["FUNCTIONAL", "RUNTIME", "CPU_RUNTIME", "MEMORY"]
 vm = false
