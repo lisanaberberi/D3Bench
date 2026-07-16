@@ -195,9 +195,6 @@ class AlibiDetect(Tool):
         methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,
 
         # FET is binary-only (x_ref must be 0/1); N/A for continuous data.
-        # methods.OnlineCD.ONLINE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.OnlineMaximumMeanDiscrepancy, TODO: OOM when allocating tensor with shape[96496,96496]
-        # methods.OnlineCD.ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.OnlineLeastSquaresDensityDifference, TODO: OOM when allocating tensor with shape[96496,96496]
-        # methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,  TODO: _ArrayMemoryError: Unable to allocate 555. GiB for an array with shape (64, 96515, 96515)
         # methods.OnlineCD.ONLINE_FISHER_EXACT_TEST: tools_alibi.OnlineFisherExactTest,  TODO: ValueError: The `x_ref` data must consist of only (0,1)'s or (False,True)'s for the FETDriftOnline detector.
     }
     online_dd_methods: dict[methods.OnlineDD, Any] = {}
