@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import Literal, Optional, TypeAlias
 
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from rich.logging import RichHandler
 
@@ -50,16 +50,17 @@ class Arguments(BaseArguments):
         default=None,
         description=(
             "Path to a scenario TOML file (e.g. scenarios/energy_covariate.toml). "
-            "When set, this takes precedence over --datafile/--tools/--criteria."
+            "When set, --datafile is ignored (the scenario picks its own dataset); "
+            "--tools/--criteria override the scenario's [run] values if explicitly passed."
         ),
     )
     criteria: set[Criteria] = Field(
         default=set(["runtime", "cputime", "memory"]),
-        description="Criteria to test.",
+        description="Criteria to test. With --scenario, overrides the scenario's criteria if passed.",
     )
     tools: set[Framework] = Field(
         default=set(["Menelaus"]),
-        description="List of tools to benchmark.",
+        description="List of tools to benchmark. With --scenario, overrides the scenario's tools if passed.",
     )
     datafile: Datafile = Field(
         default="energy",
@@ -67,20 +68,8 @@ class Arguments(BaseArguments):
     )
     output: Optional[str] = Field(
         default=None,
-        description="File to save the results to. Defaults to 'results_<tools>_<timestamp>'.",
+        description="File to save the results to. Defaults to 'results_<dataset>_<tools>_<timestamp>'.",
     )
-
-    @model_validator(mode="after")
-    def set_default_output(self) -> "Arguments":
-        """Derive the output file name from the scenario/tools if not set explicitly."""
-        if self.output is None:
-            timestamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
-            if self.scenario is not None:
-                slug = self.scenario.stem
-            else:
-                slug = "_".join(sorted(tool.lower().replace("-", "") for tool in self.tools))
-            self.output = f"results_{slug}_{timestamp}"
-        return self
 
 
 def main(args: Arguments) -> None:
@@ -97,20 +86,36 @@ def main(args: Arguments) -> None:
     if args.scenario is not None:
         logger.info("Loading scenario from %s", args.scenario)
         scenario = Scenario.from_toml(args.scenario)
+        if "tools" in args.model_fields_set:
+            logger.debug("Overriding scenario tools with CLI value: %s", args.tools)
+            scenario.run.tools = list(args.tools)
+        if "criteria" in args.model_fields_set:
+            logger.debug("Overriding scenario criteria with CLI value: %s", args.criteria)
+            scenario.run.criteria = list(args.criteria)
+        dataset_slug = args.scenario.stem
+        run_tools = scenario.run.tools
         results = scenario.run_benchmark()
     else:
         logger.info("Loading dataset and tools from d3bench")
         data = d3bench.DATASETS[args.datafile].split_data()
         tools = [d3bench.TOOLS[tool](data) for tool in args.tools]
+        dataset_slug = args.datafile
+        run_tools = list(args.tools)
 
         logger.info("Loading the benchmarks with the given criteria")
         logger.debug("Criteria: %s", args.criteria)
         results = d3bench.Results(tools, args.criteria)
     logger.debug("Results: %s", results)
 
+    output = args.output
+    if output is None:
+        tools_slug = "_".join(sorted(tool.lower().replace("-", "") for tool in run_tools))
+        timestamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+        output = f"results_{dataset_slug}_{tools_slug}_{timestamp}"
+
     logger.info("Saving the results to the output file")
-    logger.debug("Output file: %s", args.output)
-    results.save_json(output=args.output)
+    logger.debug("Output file: %s", output)
+    results.save_json(output=output)
     logger.info("Benchmark completed successfully")
 
 
