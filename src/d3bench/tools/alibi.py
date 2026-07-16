@@ -35,6 +35,7 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     _SEED = 31
 
     def _subsample(self, x: np.ndarray) -> np.ndarray:
+        x = x.astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
         rng = np.random.default_rng(self._SEED)
@@ -47,7 +48,7 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     def test(self, x_test: np.ndarray) -> None: # to catch if drift fires early and the stream returns to normal
         self.drift_ever = False
         self.drift = None
-        for x in x_test:
+        for x in x_test.astype(np.float32, copy=False):
             self.drift = self.detector.predict(x)
             if self.drift["data"]["is_drift"]:
                 self.drift_ever = True
@@ -105,6 +106,7 @@ class OnlineCramerVonMisesTest(BaseUniOnlineTest):
     """
 
     detector_class = cd.CVMDriftOnline
+    max_samples = 1000  # threshold calibration is O(n^2) in reference size
     config = {
         "ert": 100, # expected instances between false alarms (NOT a p-value),
         "window_sizes": [10],  # Window size for the sliding test-window
@@ -193,6 +195,7 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def _subsample(self, x: np.ndarray) -> np.ndarray:
+        x = x.astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
         rng = np.random.default_rng(self._SEED)

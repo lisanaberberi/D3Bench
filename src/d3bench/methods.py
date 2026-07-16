@@ -44,12 +44,14 @@ class OnlineCD(StrEnum):
     ONLINE_MAXIMUM_MEAN_DISCREPANCY = "Online Maximum Mean Discrepancy"
     ONLINE_CRAMER_VON_MISES_TEST = "Online Cramér-von Mises Test"
     ONLINE_FISHER_EXACT_TEST = "Online Fisher Exact Test"
+    ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE = "Online Least-Squares Density Difference"
 
     # Other
     CHANGE_DETECTION_DATA_STREAMS = "Change Detection in Data Streams"
     PERIODIC_TRIGGER = "Periodic Trigger"
     LINEAR_FOUR_RATES = "Linear Four Rates"
     MARGIN_DENSITY_DRIFT_DETECTION_METHOD = "Margin Density Drift Detection Method"
+
 
 
 # Online Unsupervised Data Drift Detection

@@ -189,7 +189,7 @@ class AlibiDetect(Tool):
     online_cd_methods: dict[methods.OnlineCD, Any] = {
         # Online kernel detectors: OOM fixed via max_samples=1000 (alibi.py), but
         # test() streams all 70k through predict() one instance at a time -- cost
-        # unmeasured. Enable only after profiling on a slice.
+        #unmeasured. Enable only after profiling on a slice.
         methods.OnlineCD.ONLINE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.OnlineMaximumMeanDiscrepancy,
         methods.OnlineCD.ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.OnlineLeastSquaresDensityDifference,
         methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,
@@ -202,9 +202,10 @@ class AlibiDetect(Tool):
     }
     online_dd_methods: dict[methods.OnlineDD, Any] = {}
     batch_cd_methods: dict[methods.BatchCD, Any] = {
-        # Moved from batch_cd_methods: univariate feature-distribution tests
-        # (covariate drift, P(X)) per alibi.py BaseUnivariateTest, not concept drift.
-        # MMD/LSDD are capped to 1000 samples/side (see alibi.py) -- kernel O(n^2).
+        # FisherExact: binary-only, N/A for continuous data.
+        # methods.BatchCD.FISHER_EXACT_TEST: tools_alibi.FisherExactTest,
+        # The five below need a user-supplied model/kernel (see alibi.py stubs).
+        # Scope decision: implement with a shared model spec across frameworks, or drop.
         # methods.BatchCD.LEARNED_KERNEL_DRIFT_DETECTION: 
         # methods.BatchCD.FISHER_EXACT_TEST: tools_alibi.FisherExactTest, TODO: ValueError: The `x_ref` data must consist of only (0,1)'s or (False,True)'s for the FETDrift detector.
         # methods.BatchCD.LEARNED_KERNEL_DRIFT_DETECTION: tools_alibi.LearnedKernelDriftDetection, TODO: Fix implementation
@@ -218,9 +219,9 @@ class AlibiDetect(Tool):
     }
 
     batch_dd_methods: dict[methods.BatchDD, Any] = {
-        # Moved from batch_cd_methods: these are univariate feature-distribution tests
-        # (covariate drift, P(X)) per alibi.py's own BaseUnivariateTest docstring, not
-        # concept drift (P(y|X)).
+        # Moved from batch_cd_methods: univariate feature-distribution tests
+        # (covariate drift, P(X)) per alibi.py BaseUnivariateTest, not concept drift.
+        # MMD/LSDD are capped to 1000 samples/side (see alibi.py) -- kernel O(n^2).
         methods.BatchDD.CHI_SQUARE_TEST: tools_alibi.ChiSquareTest,
         methods.BatchDD.KOLMOGOROV_SMIRNOV_TEST: tools_alibi.KolmogorovSmirnovTest,
         methods.BatchDD.CRAMER_VON_MISES_TEST: tools_alibi.CramerVonMisesTest,
