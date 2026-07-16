@@ -62,7 +62,7 @@ class OnlineMaximumMeanDiscrepancy(BaseUniOnlineTest):
     detector_class = cd.MMDDriftOnline
     max_samples = 1000 
     config = {
-        "ert": 0.05,
+        "ert": 100, # expected instances between false alarms (NOT a p-value),
         "window_size": 10,  # Expected run-time (ERT) in the absence of drift
         "backend": "tensorflow",
         "preprocess_fn": None,
@@ -83,7 +83,7 @@ class OnlineLeastSquaresDensityDifference(BaseUniOnlineTest):
     detector_class = cd.LSDDDriftOnline
     max_samples = 1000 
     config = {
-        "ert": 0.05,  # Expected run-time (ERT) in the absence of drift
+        "ert": 100, # expected instances between false alarms (NOT a p-value),
         "window_size": 10,  # Window size for the sliding test-window
         "backend": "tensorflow",
         "preprocess_fn": None,
@@ -106,7 +106,7 @@ class OnlineCramerVonMisesTest(BaseUniOnlineTest):
 
     detector_class = cd.CVMDriftOnline
     config = {
-        "ert": 0.05,  # Expected run-time (ERT) in the absence of drift
+        "ert": 100, # expected instances between false alarms (NOT a p-value),
         "window_sizes": [10],  # Window size for the sliding test-window
         "preprocess_fn": None,
         "x_ref_preprocessed": False,
@@ -124,7 +124,7 @@ class OnlineFisherExactTest(BaseUniOnlineTest):
 
     detector_class = cd.FETDriftOnline
     config = {
-        "ert": 0.05,  # Expected run-time (ERT) in the absence of drift
+        "ert": 100, # expected instances between false alarms (NOT a p-value),
         "window_sizes": [10],  # Window size for the sliding test-window
         "preprocess_fn": None,
         "x_ref_preprocessed": False,
