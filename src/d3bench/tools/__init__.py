@@ -187,6 +187,14 @@ class AlibiDetect(Tool):
 
     name: Framework = "Alibi-Detect"
     online_cd_methods: dict[methods.OnlineCD, Any] = {
+        # Online kernel detectors: OOM fixed via max_samples=1000 (alibi.py), but
+        # test() streams all 70k through predict() one instance at a time -- cost
+        # unmeasured. Enable only after profiling on a slice.
+        methods.OnlineCD.ONLINE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.OnlineMaximumMeanDiscrepancy,
+        methods.OnlineCD.ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.OnlineLeastSquaresDensityDifference,
+        methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,
+
+        # FET is binary-only (x_ref must be 0/1); N/A for continuous data.
         # methods.OnlineCD.ONLINE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.OnlineMaximumMeanDiscrepancy, TODO: OOM when allocating tensor with shape[96496,96496]
         # methods.OnlineCD.ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.OnlineLeastSquaresDensityDifference, TODO: OOM when allocating tensor with shape[96496,96496]
         # methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,  TODO: _ArrayMemoryError: Unable to allocate 555. GiB for an array with shape (64, 96515, 96515)
@@ -194,18 +202,19 @@ class AlibiDetect(Tool):
     }
     online_dd_methods: dict[methods.OnlineDD, Any] = {}
     batch_cd_methods: dict[methods.BatchCD, Any] = {
+        # Moved from batch_cd_methods: univariate feature-distribution tests
+        # (covariate drift, P(X)) per alibi.py BaseUnivariateTest, not concept drift.
+        # MMD/LSDD are capped to 1000 samples/side (see alibi.py) -- kernel O(n^2).
+        # methods.BatchCD.LEARNED_KERNEL_DRIFT_DETECTION: 
         # methods.BatchCD.FISHER_EXACT_TEST: tools_alibi.FisherExactTest, TODO: ValueError: The `x_ref` data must consist of only (0,1)'s or (False,True)'s for the FETDrift detector.
-        # methods.BatchCD.MAXIMUM_MEAN_DISCREPANCY: tools_alibi.MaximumMeanDiscrepancy, TODO: OOM when allocating tensor
-        # methods.BatchCD.LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.LeastSquaresDensityDifference, TODO: OOM when allocating tensor
         # methods.BatchCD.LEARNED_KERNEL_DRIFT_DETECTION: tools_alibi.LearnedKernelDriftDetection, TODO: Fix implementation
         # methods.BatchCD.CLASSIFIER_DRIFT_DETECTOR: tools_alibi.ClassifierDriftDetector, TODO: Fix implementation
         # methods.BatchCD.SPOT_DIFF_DRIFT_DETECTOR: tools_alibi.SpotTheDiffDriftDetector, TODO: Fix implementation
         # methods.BatchCD.CLASSIFIER_UNCERTAINTY_DRIFT_DETECTOR: tools_alibi.ClassifierUncertaintyDriftDetector, TODO: Fix implementation
         # methods.BatchCD.CONTEXT_AWARE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.ContextAwareMaximumMeanDiscrepancy, TODO: Fix implementation
-        # NOTE: MixedTypeTabularData is a per-feature covariate-drift test (see alibi.py
         # BaseUnivariateTest), not concept drift -- it stays here only because
         # methods.BatchDD has no equivalent enum member yet.
-        methods.BatchCD.MIXED_TYPE_TABULAR_DATA: tools_alibi.MixedTypeTabularData,
+        
     }
 
     batch_dd_methods: dict[methods.BatchDD, Any] = {
@@ -215,6 +224,10 @@ class AlibiDetect(Tool):
         methods.BatchDD.CHI_SQUARE_TEST: tools_alibi.ChiSquareTest,
         methods.BatchDD.KOLMOGOROV_SMIRNOV_TEST: tools_alibi.KolmogorovSmirnovTest,
         methods.BatchDD.CRAMER_VON_MISES_TEST: tools_alibi.CramerVonMisesTest,
+        methods.BatchDD.BATCH_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.MaximumMeanDiscrepancy,
+        methods.BatchDD.LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.LeastSquaresDensityDifference, 
+        # NOTE: MixedTypeTabularData is a per-feature covariate-drift test (see alibi.py
+        methods.BatchDD.MIXED_TYPE_TABULAR_DATA: tools_alibi.MixedTypeTabularData,
     }
 
     def preprocess(self, df: pd.DataFrame) -> np.ndarray:

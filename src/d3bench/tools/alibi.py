@@ -31,29 +31,36 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     def detector_class(self) -> Any:
         """Property that returns the detector class."""
 
-    def fit(self, x_reference: np.ndarray) -> None:
-        self.detector = self.detector_class(x_reference, **self.config)
+    max_samples: int | None = None          # None = full data
+    _SEED = 31
 
-    # def test(self, x_test: np.ndarray) -> None:
-    #     self.drift = self.detector.predict(x_test)
-    def test(self, x_test: np.ndarray) -> None:
-    # Online detectors consume ONE instance per predict() call; the sliding
-    # window advances internally. Feeding the whole array raises a shape
-    # error. Keep the last verdict as the stream's outcome (is_drift latches).
+    def _subsample(self, x: np.ndarray) -> np.ndarray:
+        if self.max_samples is None or len(x) <= self.max_samples:
+            return x
+        rng = np.random.default_rng(self._SEED)
+        return x[rng.choice(len(x), size=self.max_samples, replace=False)]
+
+    def fit(self, x_reference: np.ndarray) -> None:
+        self.detector = self.detector_class(self._subsample(x_reference), **self.config)
+
+
+    def test(self, x_test: np.ndarray) -> None: # to catch if drift fires early and the stream returns to normal
+        self.drift_ever = False
+        self.drift = None
         for x in x_test:
             self.drift = self.detector.predict(x)
+            if self.drift["data"]["is_drift"]:
+                self.drift_ever = True
 
-    # def result(self) -> dict[str, Any]:
-    #     raise NotImplementedError("Method not implemented.")
     def result(self) -> dict[str, Any]:
-        is_drift = bool(self.drift["data"]["is_drift"])   # scalar for the stream
-        return {"drift": {feature: is_drift for feature in self.features}}
+        return {"drift": {feature: self.drift_ever for feature in self.features}}
 
 
 class OnlineMaximumMeanDiscrepancy(BaseUniOnlineTest):
     """Online Maximum Mean Discrepancy"""
 
     detector_class = cd.MMDDriftOnline
+    max_samples = 1000 
     config = {
         "ert": 0.05,
         "window_size": 10,  # Expected run-time (ERT) in the absence of drift
@@ -74,6 +81,7 @@ class OnlineLeastSquaresDensityDifference(BaseUniOnlineTest):
     """Online Least-Squares Density Difference"""
 
     detector_class = cd.LSDDDriftOnline
+    max_samples = 1000 
     config = {
         "ert": 0.05,  # Expected run-time (ERT) in the absence of drift
         "window_size": 10,  # Window size for the sliding test-window
@@ -157,12 +165,17 @@ class BaseSpecialOnlineTests(utils.BaseTestMethod, ABC):
 class BaseUnivariateTest(utils.BaseTestMethod, ABC):
     """
     Base class for univariate drift detectors.
-    TODO: !Are these Batch CD test?!
+    
 
     drift_type
         Predict drift at the 'feature' or 'batch' level. For 'batch', the test statistics for
         each feature are aggregated using the Bonferroni or False Discovery Rate correction (if n_features>1).
     """
+
+    #: Per-side sample cap. None = full data. Set on kernel detectors (MMD/LSDD)
+    #: whose Gram matrix is O(n_ref * n_test) and OOMs on the full split.
+    max_samples: int | None = None
+    _SEED = 31
 
     def __init__(self, features: list[str]) -> None:
         self.features = features
@@ -179,11 +192,17 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
     def detector_class(self) -> Any:
         """Property that returns the detector class."""
 
+    def _subsample(self, x: np.ndarray) -> np.ndarray:
+        if self.max_samples is None or len(x) <= self.max_samples:
+            return x
+        rng = np.random.default_rng(self._SEED)
+        return x[rng.choice(len(x), size=self.max_samples, replace=False)]
+
     def fit(self, x_reference: np.ndarray) -> None:
-        self.detector = self.detector_class(x_reference, **self.config)
+        self.detector = self.detector_class(self._subsample(x_reference), **self.config)
 
     def test(self, x_test: np.ndarray) -> None:
-        self.drift = self.detector.predict(x_test, drift_type="feature")
+        self.drift = self.detector.predict(self._subsample(x_test), drift_type="feature")
 
     def result(self) -> dict[str, Any]:
         is_drift = self.drift["data"]["is_drift"]
@@ -260,50 +279,6 @@ class FisherExactTest(BaseUnivariateTest):
         "data_type": None,
     }
 
-
-class MaximumMeanDiscrepancy(BaseUnivariateTest):
-    """Maximum Mean Discrepancy"""
-
-    detector_class = cd.MMDDrift
-    config = {
-        "backend": "tensorflow",
-        "p_val": 0.05,
-        "x_ref_preprocessed": False,
-        "preprocess_at_init": True,
-        "update_x_ref": None,
-        "preprocess_fn": None,
-        "kernel": None,
-        "sigma": None,
-        "configure_kernel_from_x_ref": True,
-        "n_permutations": 100,
-        "batch_size_permutations": 1000000,
-        "device": None,
-        "input_shape": None,
-        "data_type": None,
-    }
-
-
-class LeastSquaresDensityDifference(BaseUnivariateTest):
-    """Least-Squares Density Difference"""
-
-    detector_class = cd.LSDDDrift
-    config = {
-        "backend": "tensorflow",
-        "p_val": 0.05,
-        "x_ref_preprocessed": False,
-        "preprocess_at_init": True,
-        "update_x_ref": None,
-        "preprocess_fn": None,
-        "sigma": None,
-        "n_permutations": 100,
-        "n_kernel_centers": None,
-        "lambda_rd_max": 0.2,
-        "device": None,
-        "input_shape": None,
-        "data_type": None,
-    }
-
-
 class MixedTypeTabularData(BaseUnivariateTest):
     """Mixed Type Tabular Data"""
 
@@ -322,6 +297,63 @@ class MixedTypeTabularData(BaseUnivariateTest):
         "data_type": None,
     }
 
+
+
+class BaseMultivariateTest(BaseUnivariateTest):
+    """MMD/LSDD: multivariate, single verdict, no drift_type."""
+
+    def test(self, x_test: np.ndarray) -> None:
+        self.drift = self.detector.predict(self._subsample(x_test))
+
+    def result(self) -> dict[str, Any]:
+        is_drift = bool(self.drift["data"]["is_drift"])
+        return {"drift": {feature: is_drift for feature in self.features}}
+
+
+
+class MaximumMeanDiscrepancy(BaseMultivariateTest):
+    """Maximum Mean Discrepancy"""
+
+    detector_class = cd.MMDDrift
+    max_samples = 1000 
+    config = {
+        "backend": "tensorflow",
+        "p_val": 0.05,
+        "x_ref_preprocessed": False,
+        "preprocess_at_init": True,
+        "update_x_ref": None,
+        "preprocess_fn": None,
+        "kernel": None,
+        "sigma": None,
+        "configure_kernel_from_x_ref": True,
+        "n_permutations": 100,
+        "batch_size_permutations": 1000000,
+        "device": None,
+        "input_shape": None,
+        "data_type": None,
+    }
+
+
+class LeastSquaresDensityDifference(BaseMultivariateTest):
+    """Least-Squares Density Difference"""
+
+    detector_class = cd.LSDDDrift
+    max_samples = 1000 
+    config = {
+        "backend": "tensorflow",
+        "p_val": 0.05,
+        "x_ref_preprocessed": False,
+        "preprocess_at_init": True,
+        "update_x_ref": None,
+        "preprocess_fn": None,
+        "sigma": None,
+        "n_permutations": 100,
+        "n_kernel_centers": None,
+        "lambda_rd_max": 0.2,
+        "device": None,
+        "input_shape": None,
+        "data_type": None,
+    }
 
 # Special Offline Drift Detectors
 # TODO: Implement these classes contexts and configurations

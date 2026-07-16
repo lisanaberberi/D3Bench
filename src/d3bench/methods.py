@@ -107,6 +107,14 @@ class BatchDD(StrEnum):
     # TODO: NannyML classifies Data Drift into Univariate Continuous and Categorical
     # TODO: Maybe a new subclass for Univariate Continuous and Categorical?
     # See nannyml.py, repeated method names with different implementations
+    # TODO: nannyml.JensenShannonDivergenceCategorical and HellingerDistanceCategorical
+    # are implemented but not wired into NannyML.batch_dd_methods (tools/__init__.py):
+    # they'd collide with the existing continuous JENSEN_SHANNON_DIVERGENCE_DRIFT_DETECTION
+    # / HELLINGER_DISTANCE entries in that dict. Needs the continuous/categorical
+    # taxonomy question above resolved first (e.g. separate _CATEGORICAL enum members,
+    # or a single dispatching class keyed on column dtype) before registering them.
+    # Also, the benchmark currently only exercises continuous data, so there's no
+    # categorical column to route to them yet regardless.
 
     # Distance Based
     BHATTACHARYYA_DISTANCE = "Bhattacharyya Distance"
@@ -143,3 +151,6 @@ class BatchDD(StrEnum):
     G_TEST = "G-Test"
     T_TEST = "T-Test"
     Z_TEST = "Z-Test"
+    
+    # Mixed / composite (routes per-column by dtype)
+    MIXED_TYPE_TABULAR_DATA = "Mixed-Type Tabular Data"
