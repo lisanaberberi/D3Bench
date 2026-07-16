@@ -82,7 +82,7 @@ class Frouros(Tool):
 
     name: Framework = "Frouros"
     online_cd_methods: dict[methods.OnlineCD, Any] = {
-        # methods.OnlineCD.BAYESIAN_ONLINE_CHANGE_DETECTION: tools_frouros.BayesianOnlineChangeDetection,  # TODO: Very long evaluation times for 100k ref data
+       # methods.OnlineCD.BAYESIAN_ONLINE_CHANGE_DETECTION: tools_frouros.BayesianOnlineChangeDetection,  # TODO: Very long evaluation times for 100k ref data, worked with a small siz of data, but not with the full dataset: O(n²) memory growth.
         methods.OnlineCD.CUMULATIVE_SUM_CONTROL_CHART: tools_frouros.CumulativeSumControlChart,
         methods.OnlineCD.GEOMETRIC_MOVING_AVERAGE: tools_frouros.GeometricMovingAverage,
         methods.OnlineCD.PAGE_HINKLEY_TEST: tools_frouros.PageHinkleyTest,
@@ -152,7 +152,7 @@ class Evidently(Tool):
         methods.BatchDD.ENERGY_DISTANCE: tools_evidently.EnergyDistance,
         methods.BatchDD.EPPS_SINGLETON_TEST: tools_evidently.EppsSingletonTest,
         methods.BatchDD.T_TEST: tools_evidently.TTest,
-        # methods.BatchDD.EMPIRICAL_MAXIMUM_MEAN_DISCREPANCY: tools_evidently.EmpiricalMaximumMeanDiscrepancy,
+        methods.BatchDD.EMPIRICAL_MAXIMUM_MEAN_DISCREPANCY: tools_evidently.EmpiricalMaximumMeanDiscrepancy, # this is not categorical
         # methods.BatchDD.TOTAL_VARIATION_DISTANCE: tools_evidently.TotalVariationDistance,
     }
 
@@ -194,9 +194,6 @@ class AlibiDetect(Tool):
     }
     online_dd_methods: dict[methods.OnlineDD, Any] = {}
     batch_cd_methods: dict[methods.BatchCD, Any] = {
-        methods.BatchCD.CHI_SQUARE_TEST: tools_alibi.ChiSquareTest,
-        methods.BatchCD.KOLMOGOROV_SMIRNOV_TEST: tools_alibi.KolmogorovSmirnovTest,
-        methods.BatchCD.CRAMER_VON_MISES_TEST: tools_alibi.CramerVonMisesTest,
         # methods.BatchCD.FISHER_EXACT_TEST: tools_alibi.FisherExactTest, TODO: ValueError: The `x_ref` data must consist of only (0,1)'s or (False,True)'s for the FETDrift detector.
         # methods.BatchCD.MAXIMUM_MEAN_DISCREPANCY: tools_alibi.MaximumMeanDiscrepancy, TODO: OOM when allocating tensor
         # methods.BatchCD.LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.LeastSquaresDensityDifference, TODO: OOM when allocating tensor
@@ -205,10 +202,20 @@ class AlibiDetect(Tool):
         # methods.BatchCD.SPOT_DIFF_DRIFT_DETECTOR: tools_alibi.SpotTheDiffDriftDetector, TODO: Fix implementation
         # methods.BatchCD.CLASSIFIER_UNCERTAINTY_DRIFT_DETECTOR: tools_alibi.ClassifierUncertaintyDriftDetector, TODO: Fix implementation
         # methods.BatchCD.CONTEXT_AWARE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.ContextAwareMaximumMeanDiscrepancy, TODO: Fix implementation
+        # NOTE: MixedTypeTabularData is a per-feature covariate-drift test (see alibi.py
+        # BaseUnivariateTest), not concept drift -- it stays here only because
+        # methods.BatchDD has no equivalent enum member yet.
         methods.BatchCD.MIXED_TYPE_TABULAR_DATA: tools_alibi.MixedTypeTabularData,
     }
 
-    batch_dd_methods: dict[methods.BatchDD, Any] = {}
+    batch_dd_methods: dict[methods.BatchDD, Any] = {
+        # Moved from batch_cd_methods: these are univariate feature-distribution tests
+        # (covariate drift, P(X)) per alibi.py's own BaseUnivariateTest docstring, not
+        # concept drift (P(y|X)).
+        methods.BatchDD.CHI_SQUARE_TEST: tools_alibi.ChiSquareTest,
+        methods.BatchDD.KOLMOGOROV_SMIRNOV_TEST: tools_alibi.KolmogorovSmirnovTest,
+        methods.BatchDD.CRAMER_VON_MISES_TEST: tools_alibi.CramerVonMisesTest,
+    }
 
     def preprocess(self, df: pd.DataFrame) -> np.ndarray:
         df.drop(columns={"time"}, inplace=True)
@@ -223,9 +230,9 @@ class River(Tool):
     online_cd_methods: dict[methods.OnlineCD, Any] = {
         methods.OnlineCD.ADAPTIVE_WINDOWING: tools_river.AdaptiveWindowing,
         # methods.OnlineCD.DRIFT_DETECTION_METHOD: tools_river.DriftDetectionMethod,  TODO: ValueError: math domain error
-        methods.OnlineCD.EWMA_CONCEPT_DRIFT_DETECTION_WARNING: tools_river.EarlyDriftDetectionMethod,
+        methods.OnlineCD.EARLY_DRIFT_DETECTION_METHOD: tools_river.EarlyDriftDetectionMethod,
         methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_A: tools_river.HoeffdingDriftDetectionMethodTestA,
-        methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_W: tools_river.HoeffdingDriftDetectionMethodTestW,
+        # methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_W: tools_river.HoeffdingDriftDetectionMethodTestW,  TODO: river.drift.binary.HDDM_W expects a bounded 0/1 correctness stream; fed the L2-norm of raw covariate features (unbounded), it hangs rather than converging -- effectively never returns on Energy/Occupancy-sized data.
         methods.OnlineCD.ONLINE_KOLMOGOROV_SMIRNOV: tools_river.OnlineKolmogorovSmirnov,
         methods.OnlineCD.PAGE_HINKLEY_TEST: tools_river.PageHinkleyTest,
         methods.OnlineCD.PERIODIC_TRIGGER: tools_river.PeriodicTrigger,
