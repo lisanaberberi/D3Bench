@@ -106,17 +106,15 @@ class BatchDD(StrEnum):
         model retraining.
     """
 
-    # TODO: NannyML classifies Data Drift into Univariate Continuous and Categorical
-    # TODO: Maybe a new subclass for Univariate Continuous and Categorical?
-    # See nannyml.py, repeated method names with different implementations
-    # TODO: nannyml.JensenShannonDivergenceCategorical and HellingerDistanceCategorical
-    # are implemented but not wired into NannyML.batch_dd_methods (tools/__init__.py):
-    # they'd collide with the existing continuous JENSEN_SHANNON_DIVERGENCE_DRIFT_DETECTION
-    # / HELLINGER_DISTANCE entries in that dict. Needs the continuous/categorical
-    # taxonomy question above resolved first (e.g. separate _CATEGORICAL enum members,
-    # or a single dispatching class keyed on column dtype) before registering them.
-    # Also, the benchmark currently only exercises continuous data, so there's no
-    # categorical column to route to them yet regardless.
+    # NannyML classifies Data Drift into Univariate Continuous and Categorical (see
+    # nannyml.py, repeated method names with different implementations). Where a
+    # method has both, the categorical variant gets its own _CATEGORICAL member below
+    # (e.g. JENSEN_SHANNON_DIVERGENCE_CATEGORICAL, HELLINGER_DISTANCE_CATEGORICAL) so
+    # it doesn't collide with the continuous entry in NannyML.batch_dd_methods
+    # (tools/__init__.py).
+    # TODO: The benchmark currently only exercises continuous data, so there's no
+    # categorical column to route these to yet -- they'll run but detect nothing
+    # until categorical columns are added.
 
     # Distance Based
     BHATTACHARYYA_DISTANCE = "Bhattacharyya Distance"
@@ -124,8 +122,10 @@ class BatchDD(StrEnum):
     ENERGY_DISTANCE = "Energy Distance"
     WASSERSTEIN_DISTANCE = "Wasserstein Distance"
     HELLINGER_DISTANCE = "Hellinger Distance"
+    HELLINGER_DISTANCE_CATEGORICAL = "Hellinger Distance (Categorical)"
     HISTOGRAM_INTERSECTION_NORMALIZED_COMPLEMENT = "Histogram Intersection Normalized Complement"
     JENSEN_SHANNON_DIVERGENCE_DRIFT_DETECTION = "Jensen-Shannon Divergence Drift Detection"
+    JENSEN_SHANNON_DIVERGENCE_CATEGORICAL = "Jensen-Shannon Divergence Drift Detection (Categorical)"
     KULLBACK_LEIBLER_DIVERGENCE_DRIFT_DETECTION = "Kullback-Leibler Divergence Drift Detection"
     LEAST_SQUARES_DENSITY_DIFFERENCE = "Least-Squares Density Difference"
     BATCH_MAXIMUM_MEAN_DISCREPANCY = "Batch Maximum Mean Discrepancy"

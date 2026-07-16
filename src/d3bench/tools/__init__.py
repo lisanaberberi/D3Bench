@@ -171,8 +171,10 @@ class NannyML(Tool):
     batch_cd_methods: dict[methods.BatchCD, Any] = {}
     batch_dd_methods: dict[methods.BatchDD, Any] = {
         methods.BatchDD.JENSEN_SHANNON_DIVERGENCE_DRIFT_DETECTION: tools_nannyml.JensenShannonDivergenceDriftDetection,
+        methods.BatchDD.JENSEN_SHANNON_DIVERGENCE_CATEGORICAL: tools_nannyml.JensenShannonDivergenceCategorical,
         methods.BatchDD.WASSERSTEIN_DISTANCE: tools_nannyml.WassersteinDistance,
         methods.BatchDD.HELLINGER_DISTANCE: tools_nannyml.HellingerDistance,
+        methods.BatchDD.HELLINGER_DISTANCE_CATEGORICAL: tools_nannyml.HellingerDistanceCategorical,
         methods.BatchDD.KOLMOGOROV_SMIRNOV_TEST: tools_nannyml.KolmogorovSmirnovTest,
         methods.BatchDD.CHI_SQUARE_TEST: tools_nannyml.ChiSquareTest,
         methods.BatchDD.L_INFINITY_DISTANCE: tools_nannyml.LInfinityDistance,

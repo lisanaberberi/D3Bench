@@ -110,16 +110,16 @@ class BaseUnivariateCategorical(utils.BaseTestMethod, ABC):
         return {"drift": _alert_per_feature(self.results, self.detector_reference, self.features)}
 
 
-# class JensenShannonDivergenceDriftDetection(BaseUnivariateCategorical):
-#     """Jensen-Shannon Divergence Drift Detection"""
+class JensenShannonDivergenceCategorical(BaseUnivariateCategorical):
+    """Jensen-Shannon Divergence Drift Detection"""
 
-#     detector_reference = "jensen_shannon"
+    detector_reference = "jensen_shannon"
 
 
-# class HellingerDistance(BaseUnivariateCategorical):
-#     """Hellinger Distance"""
+class HellingerDistanceCategorical(BaseUnivariateCategorical):
+    """Hellinger Distance"""
 
-#     detector_reference = "hellinger"
+    detector_reference = "hellinger"
 
 
 class ChiSquareTest(BaseUnivariateCategorical):
