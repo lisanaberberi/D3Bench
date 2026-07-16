@@ -241,8 +241,8 @@ class River(Tool):
     online_cd_methods: dict[methods.OnlineCD, Any] = {
         methods.OnlineCD.ADAPTIVE_WINDOWING: tools_river.AdaptiveWindowing,
         # methods.OnlineCD.DRIFT_DETECTION_METHOD: tools_river.DriftDetectionMethod,  TODO: ValueError: math domain error
-        methods.OnlineCD.EARLY_DRIFT_DETECTION_METHOD: tools_river.EarlyDriftDetectionMethod,
-        methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_A: tools_river.HoeffdingDriftDetectionMethodTestA,
+        # methods.OnlineCD.EARLY_DRIFT_DETECTION_METHOD: tools_river.EarlyDriftDetectionMethod,
+        # methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_A: tools_river.HoeffdingDriftDetectionMethodTestA,
         # methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_W: tools_river.HoeffdingDriftDetectionMethodTestW,  TODO: river.drift.binary.HDDM_W expects a bounded 0/1 correctness stream; fed the L2-norm of raw covariate features (unbounded), it hangs rather than converging -- effectively never returns on Energy/Occupancy-sized data.
         methods.OnlineCD.ONLINE_KOLMOGOROV_SMIRNOV: tools_river.OnlineKolmogorovSmirnov,
         methods.OnlineCD.PAGE_HINKLEY_TEST: tools_river.PageHinkleyTest,

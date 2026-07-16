@@ -39,12 +39,14 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
             self.detector.update(x)
 
     def test(self, x_test: np.ndarray) -> None:
-        # Only one feature is accepted
-        for x in np.linalg.norm(x_test, ord=2, axis=1):
+        self.drift_ever = False
+        for x in np.linalg.norm(x_test, ord=2, axis=1):  
             self.detector.update(x)
+            if self.detector.drift_detected:
+                self.drift_ever = True
 
     def result(self) -> dict[str, Any]:
-        raise NotImplementedError("Method not implemented.")
+        return {"drift": self.drift_ever}
 
 
 class AdaptiveWindowing(BaseOnlineTest):
