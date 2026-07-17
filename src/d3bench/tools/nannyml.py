@@ -24,6 +24,21 @@ def _alert_per_feature(results: Any, method: str, features: list[str]) -> dict[s
     }
 
 
+def _statistic_per_feature(results: Any, method: str, features: list[str]) -> dict[str, float]:
+    """Return, per feature, the peak drift value seen across the tested window's chunks.
+
+    NannyML reports one value per chunk, not a single number; take the chunk
+    with the largest magnitude, the same "worst case over the window" choice
+    `_alert_per_feature` makes for the boolean verdict.
+    """
+    df = results.to_df()
+    return {
+        feature: float(df[(feature, method, "value")].abs().max())
+        for feature in features
+        if (feature, method, "value") in df.columns
+    }
+
+
 # Univariate Continuous Data Drift Detection
 
 
@@ -52,7 +67,10 @@ class BaseUnivariateContinuous(utils.BaseTestMethod, ABC):
         self.results = self.detector.calculate(x_test)
 
     def result(self) -> dict[str, Any]:
-        return {"drift": _alert_per_feature(self.results, self.detector_reference, self.features)}
+        return {
+            "drift": _alert_per_feature(self.results, self.detector_reference, self.features),
+            "statistic": _statistic_per_feature(self.results, self.detector_reference, self.features),
+        }
 
 
 class JensenShannonDivergenceDriftDetection(BaseUnivariateContinuous):
@@ -107,7 +125,10 @@ class BaseUnivariateCategorical(utils.BaseTestMethod, ABC):
         self.results = self.detector.calculate(x_test)
 
     def result(self) -> dict[str, Any]:
-        return {"drift": _alert_per_feature(self.results, self.detector_reference, self.features)}
+        return {
+            "drift": _alert_per_feature(self.results, self.detector_reference, self.features),
+            "statistic": _statistic_per_feature(self.results, self.detector_reference, self.features),
+        }
 
 
 class JensenShannonDivergenceCategorical(BaseUnivariateCategorical):
