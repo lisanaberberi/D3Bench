@@ -77,6 +77,17 @@ class Report(BaseModel):
     functional: Optional[Dict[str, bool]] = Field(
         None, description="Whether drift was flagged on each monitored column"
     )
+    statistic: Optional[Dict[str, float]] = Field(
+        None,
+        description=(
+            "Per-column value each method compared against its threshold to reach the "
+            "functional verdict above -- a p-value for classical hypothesis tests, a "
+            "distance/divergence for distance-based methods. Semantics vary by method, "
+            "mirroring the source library's own convention (e.g. Evidently's 'value', "
+            "NannyML's 'value', Alibi-Detect's 'distance'/'test_stat'); this is the D-value "
+            "column in the benchmark paper's tables."
+        ),
+    )
 
 
 class OnlineCDReport(Report):
@@ -90,14 +101,15 @@ class OnlineCDReport(Report):
     """
 
     method: methods.OnlineCD = Field(..., description="Method used in benchmark")
-    # TODO: additional attributes suggested by copilot
+    # `statistic` (on the base Report) now covers "method-specific stats".
+    # TODO: these all need a ground-truth drift point/label to compute, which
+    # the current Data/Dataset abstraction doesn't carry -- not implemented.
     # detection_delay: Optional[Stats] = Field(None, description="Samples until drift detection")
     # false_alarm_rate: Optional[float] = Field(None, description="False positives")
     # missed_detection_rate: Optional[float] = Field(None, description="False negatives")
     # f1_score: Optional[float] = Field(None, description="Harmonic mean of precision and recall")
     # adaptation_time: Optional[Stats] = Field(None, description="Time to adapt after drift")
     # auc_score: Optional[float] = Field(None, description="Area under ROC curve")
-    # test_statistics: Optional[Dict[str, Any]] = Field(None, description="Method-specific stats")
 
 
 class OnlineDDReport(Report):
@@ -111,12 +123,13 @@ class OnlineDDReport(Report):
     """
 
     method: methods.OnlineDD = Field(..., description="Method used in benchmark")
-    # TODO: additional attributes suggested by copilot
+    # `statistic` (on the base Report) now covers "method-specific stats".
+    # TODO: these all need a ground-truth drift point/label to compute, which
+    # the current Data/Dataset abstraction doesn't carry -- not implemented.
     # detection_delay: Optional[Stats] = Field(None, description="Samples until drift detection")
     # false_alarm_rate: Optional[float] = Field(None, description="False positives")
     # statistical_power: Optional[float] = Field(None, description="Ability to detect drift")
     # processing_time_per_sample: Optional[Stats] = Field(None, description="Computational efficiency")
-    # test_statistics: Optional[Dict[str, Any]] = Field(None, description="Method-specific stats")
 
 
 class BatchCDReport(Report):
@@ -129,14 +142,14 @@ class BatchCDReport(Report):
     """
 
     method: methods.BatchCD = Field(..., description="Method used in benchmark")
-    # TODO: additional attributes suggested by copilot
-    # drift_detected: bool = Field(False, description="Whether drift was detected")
+    # drift_detected -> `functional`, test_statistics -> `statistic` (both on the base Report).
+    # TODO: these all need a ground-truth drift point/label to compute, which
+    # the current Data/Dataset abstraction doesn't carry -- not implemented.
     # detection_accuracy: Optional[float] = Field(None, description="Correct detections")
     # drift_magnitude: Optional[float] = Field(None, description="Magnitude of the drift")
     # confidence_level: Optional[float] = Field(None, description="Confidence in detection")
     # drift_location: Optional[Union[int, List[int]]] = Field(None, description="Est. drift pos.")
     # testing_power: Optional[float] = Field(None, description="Statistical power")
-    # test_statistics: Optional[Dict[str, Any]] = Field(None, description="Method-specific stats")
 
 
 class BatchDDReport(Report):
@@ -149,11 +162,10 @@ class BatchDDReport(Report):
     """
 
     method: methods.BatchDD = Field(..., description="Method used in benchmark")
-    # TODO: additional attributes for the report class
-    # drift_detected: bool = Field(False, description="Whether drift was detected")
-    # drift_score: Optional[float] = Field(None, description="Overall magnitude")
-    # feature_drift_scores: Optional[Dict[str, float]] = Field(None, description="Per-feature")
-    # p_value: Optional[float] = Field(None, description="Significance")
+    # drift_detected -> `functional`; drift_score/feature_drift_scores/p_value/test_statistics
+    # -> `statistic` (all on the base Report, per-column, standardized across tools).
+    # TODO: neither effect_size nor a confidence_interval is computed by any tool
+    # module today (most methods here are distances/divergences with no natural
+    # effect-size or CI, e.g. PSI, Wasserstein, KL) -- not implemented.
     # effect_size: Optional[float] = Field(None, description="Magnitude of the effect")
     # confidence_interval: Optional[tuple] = Field(None, description="Confidence interval")
-    # test_statistics: Optional[Dict[str, Any]] = Field(None, description="Method-specific stats")
