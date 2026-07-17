@@ -1,5 +1,6 @@
 """Module for Evidently detectors."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -13,6 +14,8 @@ from evidently.future.datasets import Dataset as EDataset
 from evidently.future.datasets import DataDefinition as EDataDefinition
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Tabular Univariate Data Drift Detection
 
@@ -37,14 +40,39 @@ class BaseTabularDetectors(utils.BaseTestMethod, ABC):
         self._x_reference = x_reference
         raise NotImplementedError("Evidence does not provide fit method")
 
+    def _run_reports(self, x_reference: Any, x_test: Any) -> dict[str, Any]:
+        """Run each feature's report independently.
+
+        Some methods (e.g. Epps-Singleton) reject a column outright based on
+        its distribution (a near-constant binary column has IQR 0). Running
+        every feature in one dict comprehension means one such column takes
+        the whole method down; a feature that fails is logged and left out of
+        the results instead, the same way NannyML skips inapplicable columns.
+        """
+        results = {}
+        for f, report in self.reports.items():
+            try:
+                results[f] = report.run(x_reference, x_test)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "%s: skipping column %r, report run failed",
+                    type(self).__name__,
+                    f,
+                    exc_info=True,
+                )
+        return results
+
     def test(self, x_test: pd.DataFrame) -> None:
         x_reference = self._x_reference
-        self.results = {f: self.reports[f].run(x_reference, x_test)
-                        for f in self.reports} # fmt: skip
+        self.results = self._run_reports(x_reference, x_test)
 
     def result(self) -> dict[str, Any]:
         return {
-            "p-values": {f: self.results[f].dict()["metrics"][0]["value"]
+            # Evidently's ValueDrift "value" is polymorphic: a p-value for
+            # classical tests (KS, T-Test, ...), a distance/divergence for
+            # the rest (PSI, Wasserstein, KL, ...) -- whatever it thresholds
+            # against to reach the "tests" verdict below.
+            "statistic": {f: self.results[f].dict()["metrics"][0]["value"]
                          for f in self.results}, # fmt: skip
             "drift": {
                 f: self.results[f].dict()["tests"][0]["status"] == "FAIL"
@@ -182,7 +210,7 @@ class EmpiricalMaximumMeanDiscrepancy(BaseTabularDetectors):
     def test(self, x_test: EDataset) -> None:
         x_reference = self._BaseTabularDetectors_x_reference
         x_test = self._subsample(x_test)
-        self.results = {f: self.reports[f].run(x_reference, x_test) for f in self.reports}
+        self.results = self._run_reports(x_reference, x_test)
 
 
 class TotalVariationDistance(BaseTabularDetectors):
