@@ -1,6 +1,6 @@
 """Module for Alibi Detect detectors."""
 
-from typing import Any
+from typing import Any, Optional
 
 from abc import ABC, abstractmethod
 import pandas as pd
@@ -8,6 +8,21 @@ import numpy as np
 from alibi_detect import cd
 
 from d3bench import utils
+
+
+def _statistic_value(data: dict[str, Any]) -> Optional[Any]:
+    """Return whichever of distance / test_stat / p_val alibi populated.
+
+    Offline (batch) detectors report `distance` (a scalar for MMD/LSDD, a
+    per-feature array for the univariate tests) alongside `p_val`. Online
+    detectors instead report `test_stat` once past the ERT calibration
+    window, leaving `distance`/`p_val` at None until then.
+    """
+    for key in ("distance", "test_stat", "p_val"):
+        value = data.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 # Concept Drift Online Detector Methods
@@ -54,7 +69,11 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
                 self.drift_ever = True
 
     def result(self) -> dict[str, Any]:
-        return {"drift": {feature: self.drift_ever for feature in self.features}}
+        result: dict[str, Any] = {"drift": {feature: self.drift_ever for feature in self.features}}
+        statistic = _statistic_value(self.drift["data"]) if self.drift is not None else None
+        if statistic is not None:
+            result["statistic"] = {feature: float(statistic) for feature in self.features}
+        return result
 
 
 class OnlineMaximumMeanDiscrepancy(BaseUniOnlineTest):
@@ -209,7 +228,15 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
 
     def result(self) -> dict[str, Any]:
         is_drift = self.drift["data"]["is_drift"]
-        return {"drift": {feature: bool(is_drift[i]) for i, feature in enumerate(self.features)}}
+        result: dict[str, Any] = {
+            "drift": {feature: bool(is_drift[i]) for i, feature in enumerate(self.features)}
+        }
+        statistic = _statistic_value(self.drift["data"])
+        if statistic is not None:
+            result["statistic"] = {
+                feature: float(statistic[i]) for i, feature in enumerate(self.features)
+            }
+        return result
 
 
 class ChiSquareTest(BaseUnivariateTest):
@@ -310,7 +337,11 @@ class BaseMultivariateTest(BaseUnivariateTest):
 
     def result(self) -> dict[str, Any]:
         is_drift = bool(self.drift["data"]["is_drift"])
-        return {"drift": {feature: is_drift for feature in self.features}}
+        result: dict[str, Any] = {"drift": {feature: is_drift for feature in self.features}}
+        statistic = _statistic_value(self.drift["data"])
+        if statistic is not None:
+            result["statistic"] = {feature: float(statistic) for feature in self.features}
+        return result
 
 
 
