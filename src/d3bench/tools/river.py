@@ -40,14 +40,16 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
 
     def test(self, x_test: np.ndarray) -> None:
         self.drift_ever = False
-        for x in np.linalg.norm(x_test, ord=2, axis=1):  
+        for x in np.linalg.norm(x_test, ord=2, axis=1):
             self.detector.update(x)
             if self.detector.drift_detected:
                 self.drift_ever = True
 
     def result(self) -> dict[str, Any]:
+        # No uniform test statistic across river's online CD algorithms
+        # (ADWIN, PageHinkley track different private state); report only the
+        # verdict. KSWIN overrides with its KS statistic.
         return {"drift": self.drift_ever}
-
 
 class AdaptiveWindowing(BaseOnlineTest):
     """Online Maximum Mean Discrepancy"""
@@ -118,6 +120,24 @@ class OnlineKolmogorovSmirnov(BaseOnlineTest):
         "seed": None,
         "window": None,
     }
+
+    def test(self, x_test: np.ndarray) -> None:
+        self.drift_ever = False
+        self.drift_p_value = None
+        for x in np.linalg.norm(x_test, ord=2, axis=1):
+            self.detector.update(x)
+            if self.detector.drift_detected:
+                self.drift_ever = True
+                if self.drift_p_value is None:          # first firing only
+                    self.drift_p_value = self.detector.p_value
+
+    def result(self) -> dict[str, Any]:
+        # KSWIN's KS p-value captured at the moment drift first fired -- not the
+        # stream-end window, which resets after each firing.
+        result = {"drift": self.drift_ever}
+        if self.drift_p_value is not None:
+            result["statistic"] = self.drift_p_value
+        return result
 
 
 class PageHinkleyTest(BaseOnlineTest):
