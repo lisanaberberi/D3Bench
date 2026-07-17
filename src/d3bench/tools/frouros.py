@@ -79,6 +79,10 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
             self.detector.update(value=x)
 
     def result(self) -> dict[str, Any]:
+        # Online CD detectors expose no uniform test statistic across algorithms,
+        # and status["drift"] latches -- a firing count is just "instances after
+        # first detection", a transition count is always 0/1 (duplicates drift).
+        # No comparable D-value exists; report only the verdict.
         return {"drift": self.detector.status["drift"]}
 
 
@@ -259,11 +263,14 @@ class OnlineMaximumMeanDiscrepancy(utils.BaseTestMethod):
         self.detector.fit(X=x_reference)
 
     def test(self, x_test: np.ndarray) -> None:
-        # Take only the first 10 instances for testing as window size is 10
-        self.distance = [self.detector.update(value=x)[0] for x in x_test[:10]][-1]
+        # Take only the first 10 instances for testing as window size is 10.
+        # update() returns (None, {}) until the window fills, then
+        # (DistanceResult(distance=...), {}); unwrap it to a plain float.
+        result = [self.detector.update(value=x)[0] for x in x_test[:10]][-1]
+        self.distance = result.distance if result is not None else None
 
     def result(self) -> dict[str, Any]:
-        return {"distance": self.distance}
+        return {"statistic": self.distance}
 
 
 class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
@@ -294,8 +301,9 @@ class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
 
     def result(self) -> dict[str, Any]:
         return {
-            "distances": [self.results[i].statistic for i, _ in enumerate(self.features)],
-            "p_values": [self.results[i].p_value for i, _ in enumerate(self.features)],
+            "statistic": {
+                feature: self.results[i].statistic for i, feature in enumerate(self.features)
+            },
             "drift": {
                 feature: self.results[i].p_value < SIGNIFICANCE_LEVEL
                 for i, feature in enumerate(self.features)
@@ -385,12 +393,24 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
         if self.distance_based:
             return callback_logs[PermutationTestDistanceBased.__name__]["p_value"]
         return stat_result.p_value
- 
+
+    def _statistic(self, index: int) -> float:
+        """The D-value: the raw distance for distance-based detectors (PSI,
+        EMD, ...), the test statistic for the statistical tests (KS, Welch,
+        ...) -- distinct from `_p_value`, which is only used for the drift
+        decision and, for distance-based detectors, comes from a separate
+        permutation-test callback rather than this result object."""
+        stat_result, _ = self.results[index]
+        if self.distance_based:
+            return stat_result.distance
+        return stat_result.statistic
+
     def result(self) -> dict[str, Any]:
         p_values = [self._p_value(i) for i, _ in enumerate(self.features)]
         return {
-            "results": self.results,
-            "p_values": p_values,
+            "statistic": {
+                feature: self._statistic(i) for i, feature in enumerate(self.features)
+            },
             "drift": {
                 feature: p_value < SIGNIFICANCE_LEVEL
                 for feature, p_value in zip(self.features, p_values)
