@@ -71,21 +71,30 @@ class BaseBenchmark(ABC):
     def get_memories(self) -> reports.Stats:
         """Run the benchmark for the MEMORY criterion."""
 
-    def get_functional(self) -> Optional[dict[str, bool]]:
-        """Return whether drift was flagged on each monitored column.
+    def _broadcast(self, value: Any, cast: Any) -> Optional[dict[str, Any]]:
+        """Turn a `result()` entry into a per-column mapping.
 
-        Each detector's `result()` exposes a "drift" entry that is either a
-        single bool (methods that only look at the combined feature signal)
-        or a dict keyed by column (methods that test each feature
-        separately). A single bool is broadcast to every monitored column so
-        the "functional" criterion always yields a per-column mapping.
+        Each detector's `result()` exposes entries ("drift", "statistic")
+        that are either a single scalar (methods that only look at the
+        combined feature signal) or a dict keyed by column (methods that
+        test each feature separately). A single scalar is broadcast to every
+        monitored column so criteria that read this always get a per-column
+        mapping.
         """
-        drift = self.get_results().get("drift")
-        if drift is None:
+        if value is None:
             return None
-        if isinstance(drift, dict):
-            return {column: bool(value) for column, value in drift.items()}
-        return {feature: bool(drift) for feature in self.data.features}
+        if isinstance(value, dict):
+            return {column: cast(v) for column, v in value.items()}
+        return {feature: cast(value) for feature in self.data.features}
+
+    def get_functional(self) -> Optional[dict[str, bool]]:
+        """Return whether drift was flagged on each monitored column."""
+        return self._broadcast(self.get_results().get("drift"), bool)
+
+    def get_statistic(self) -> Optional[dict[str, float]]:
+        """Return the per-column value each method compared against its
+        threshold to reach the functional verdict (see Report.statistic)."""
+        return self._broadcast(self.get_results().get("statistic"), float)
 
     def report(self, criteria: set[Criteria]) -> Report:
         """Return the drift detection values."""
@@ -94,6 +103,7 @@ class BaseBenchmark(ABC):
             cputime=self.get_cputimes() if "cputime" in criteria else None,
             memory=self.get_memories() if "memory" in criteria else None,
             functional=self.get_functional() if "functional" in criteria else None,
+            statistic=self.get_statistic() if "functional" in criteria else None,
             test_information=TestInformation(
                 framework=self.tool.name,
                 run_on_vm=self.run_on_vm,
