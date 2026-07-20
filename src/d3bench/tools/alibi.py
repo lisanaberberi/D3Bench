@@ -63,7 +63,14 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     def test(self, x_test: np.ndarray) -> None: # to catch if drift fires early and the stream returns to normal
         self.drift_ever = False
         self.drift = None
-        for x in x_test.astype(np.float32, copy=False):
+        x_test = x_test.astype(np.float32, copy=False)
+        # detector.predict() is one TF forward pass per row; streaming the full split
+        # (tens of thousands of rows) can take an hour+. Cap to a leading prefix --
+        # not a random subsample -- so window/ERT-based online detectors still see a
+        # contiguous, time-ordered stream.
+        if self.max_samples is not None and len(x_test) > self.max_samples:
+            x_test = x_test[: self.max_samples]
+        for x in x_test:
             self.drift = self.detector.predict(x)
             if self.drift["data"]["is_drift"]:
                 self.drift_ever = True
@@ -72,7 +79,16 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         result: dict[str, Any] = {"drift": {feature: self.drift_ever for feature in self.features}}
         statistic = _statistic_value(self.drift["data"]) if self.drift is not None else None
         if statistic is not None:
-            result["statistic"] = {feature: float(statistic) for feature in self.features}
+            # MMD/LSDD online report one combined scalar for all features; CVM online
+            # (shape (n_windows, n_features)) reports one value per feature -- flatten
+            # and only index per feature when the shapes actually line up.
+            statistic = np.asarray(statistic, dtype=float).reshape(-1)
+            if statistic.size == len(self.features):
+                result["statistic"] = {
+                    feature: float(statistic[i]) for i, feature in enumerate(self.features)
+                }
+            else:
+                result["statistic"] = {feature: float(statistic[0]) for feature in self.features}
         return result
 
 

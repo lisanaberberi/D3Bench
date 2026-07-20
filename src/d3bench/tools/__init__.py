@@ -189,9 +189,10 @@ class AlibiDetect(Tool):
 
     name: Framework = "Alibi-Detect"
     online_cd_methods: dict[methods.OnlineCD, Any] = {
-        # Online kernel detectors: OOM fixed via max_samples=1000 (alibi.py), but
-        # test() streams all 70k through predict() one instance at a time -- cost
-        #unmeasured. Enable only after profiling on a slice.
+        # Online kernel detectors: OOM fixed via max_samples=1000 (alibi.py); test()
+        # also caps the streamed x_test to the same leading 1000 rows (BaseUniOnlineTest.test),
+        # since predict() is one TF forward pass per row and streaming tens of
+        # thousands of rows could take an hour+.
         methods.OnlineCD.ONLINE_MAXIMUM_MEAN_DISCREPANCY: tools_alibi.OnlineMaximumMeanDiscrepancy,
         methods.OnlineCD.ONLINE_LEAST_SQUARES_DENSITY_DIFFERENCE: tools_alibi.OnlineLeastSquaresDensityDifference,
         methods.OnlineCD.ONLINE_CRAMER_VON_MISES_TEST: tools_alibi.OnlineCramerVonMisesTest,
