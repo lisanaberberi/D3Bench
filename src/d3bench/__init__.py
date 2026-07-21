@@ -22,6 +22,7 @@ from d3bench.tools import Tool
 DATASET_CLASSES: dict[Datafile, Type[Dataset]] = {
     "energy": datasets.DataEnergy,
     "occupancy": datasets.DataOccupancy,
+    "motor": datasets.DataMotor,
 }
 
 # Initialize the datasets constant.
@@ -29,10 +30,16 @@ DATASET_CLASSES: dict[Datafile, Type[Dataset]] = {
 # before Options' default boundary (2022-01-01), which would otherwise
 # leave the testing split empty; use the boundary reported in the paper
 # (9 May 2021) instead.
+# motor has no time axis at all -- it group-splits on Region instead of a
+# boundary date (see datasets.DataMotor); R82/R93 (~24% of policies) are held
+# out as the "current" (new-geography) set, the rest as "reference".
 DATASETS: dict[Datafile, Dataset] = {
     "energy": DATASET_CLASSES["energy"](building_id=1),
     "occupancy": DATASET_CLASSES["occupancy"](
         settings=DatasetOptions(boundary=dt.date(2021, 5, 9))
+    ),
+    "motor": DATASET_CLASSES["motor"](
+        settings=DatasetOptions(current_regions=["R82", "R93"])
     ),
 }
 

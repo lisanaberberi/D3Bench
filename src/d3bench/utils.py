@@ -4,6 +4,7 @@ import dataclasses as dc
 from abc import ABC, abstractmethod
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from pydantic_settings import (
     BaseSettings,
@@ -14,6 +15,26 @@ from rich_argparse import RichHelpFormatter
 
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=too-few-public-methods
+
+
+def _is_numeric_column(column: np.ndarray) -> bool:
+    """Whether an object-dtype column (from Tool.preprocess) holds numeric values."""
+    try:
+        column.astype(np.float64)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def numeric_column_indices(x: np.ndarray) -> list[int]:
+    """Positions of x's (object-dtype, shape [n, n_features]) numeric-valued columns.
+
+    Shared by tool adapters (alibi.py, frouros.py, ...) whose methods are
+    continuous-only and need to drop categorical columns from a mixed-dtype
+    dataset (e.g. French Motor Claims) -- a no-op (returns every index) on
+    all-numeric datasets like energy/occupancy.
+    """
+    return [i for i in range(x.shape[1]) if _is_numeric_column(x[:, i])]
 
 
 class BaseArguments(BaseSettings):

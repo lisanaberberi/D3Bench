@@ -19,7 +19,7 @@ import tomllib
 from pathlib import Path
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from d3bench import DATASET_CLASSES, TOOLS
 from d3bench.config import Criteria, Datafile, Framework
@@ -36,6 +36,7 @@ from d3bench.utils import Data
 # the lowercase Criteria literals used by Benchmark/Report.
 _CRITERIA_ALIASES: dict[str, Criteria] = {
     "FUNCTIONAL": "functional",
+    "STATISTICS": "statistics",
     "RUNTIME": "runtime",
     "CPU_RUNTIME": "cputime",
     "MEMORY": "memory",
@@ -45,12 +46,33 @@ _SPLIT_BOUNDARY_FORMAT = "%m-%d-%Y %H:%M"
 
 
 class DataConfig(BaseModel):
-    """The ``[data]`` table of a scenario TOML file."""
+    """The ``[data]`` table of a scenario TOML file.
+
+    Time-indexed datasets (energy, occupancy) split on ``split_boundary``.
+    Cross-sectional datasets with no time axis (motor) split on
+    ``current_regions`` instead -- exactly one of the two must be set,
+    matching whichever ground-truth split the dataset's ``Dataset`` subclass
+    implements (see ``d3bench.datasets``).
+    """
 
     dataset: Datafile
     path: Optional[Path] = None
     building_id: Optional[int] = None
-    split_boundary: str = Field(..., description='Ground-truth split, e.g. "04-01-2020 00:00".')
+    split_boundary: Optional[str] = Field(
+        default=None, description='Ground-truth time split, e.g. "04-01-2020 00:00".'
+    )
+    current_regions: Optional[list[str]] = Field(
+        default=None,
+        description='Ground-truth group split for cross-sectional datasets, e.g. ["R82", "R93"].',
+    )
+
+    @model_validator(mode="after")
+    def _check_split_is_set(self) -> "DataConfig":
+        if (self.split_boundary is None) == (self.current_regions is None):
+            raise ValueError(
+                "exactly one of split_boundary or current_regions must be set in [data]"
+            )
+        return self
 
 
 class RunConfig(BaseModel):
@@ -85,10 +107,13 @@ class Scenario(BaseModel):
             return cls.model_validate(tomllib.load(toml_file))
 
     def load_dataset(self) -> Dataset:
-        """Instantiate the scenario's dataset with its ground-truth boundary."""
+        """Instantiate the scenario's dataset with its ground-truth split."""
         dataset_cls = DATASET_CLASSES[self.data.dataset]
-        boundary = dt.datetime.strptime(self.data.split_boundary, _SPLIT_BOUNDARY_FORMAT).date()
-        settings = DatasetOptions(boundary=boundary)
+        if self.data.split_boundary is not None:
+            boundary = dt.datetime.strptime(self.data.split_boundary, _SPLIT_BOUNDARY_FORMAT).date()
+            settings = DatasetOptions(boundary=boundary)
+        else:
+            settings = DatasetOptions(current_regions=self.data.current_regions)
         if self.data.building_id is not None:
             return dataset_cls(self.data.building_id, settings=settings, path=self.data.path)
         return dataset_cls(settings=settings, path=self.data.path)

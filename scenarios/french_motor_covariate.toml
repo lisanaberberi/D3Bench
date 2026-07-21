@@ -1,0 +1,9 @@
+[data]
+dataset = "motor"
+path = "datafiles/freMTPL2freq.csv"
+current_regions = ["R82", "R93"]
+
+[run]
+tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "STATISTICS", "RUNTIME", "CPU_RUNTIME", "MEMORY"]
+vm = false
