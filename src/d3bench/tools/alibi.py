@@ -50,20 +50,26 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     _SEED = 31
 
     def _subsample(self, x: np.ndarray) -> np.ndarray:
-        x = x.astype(np.float32, copy=False)
+        x = x[:, self._numeric_idx].astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
         rng = np.random.default_rng(self._SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # MMD/LSDD/CvM are continuous-only kernel/distance methods -- drop
+        # categorical columns (a no-op on all-numeric datasets like
+        # energy/occupancy) and narrow self.features to match, so per-feature
+        # results (e.g. CVM online's per-feature statistic) stay aligned.
+        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self.features = [self.features[i] for i in self._numeric_idx]
         self.detector = self.detector_class(self._subsample(x_reference), **self.config)
 
 
     def test(self, x_test: np.ndarray) -> None: # to catch if drift fires early and the stream returns to normal
         self.drift_ever = False
         self.drift = None
-        x_test = x_test.astype(np.float32, copy=False)
+        x_test = x_test[:, self._numeric_idx].astype(np.float32, copy=False)
         # detector.predict() is one TF forward pass per row; streaming the full split
         # (tens of thousands of rows) can take an hour+. Cap to a leading prefix --
         # not a random subsample -- so window/ERT-based online detectors still see a
@@ -230,13 +236,20 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def _subsample(self, x: np.ndarray) -> np.ndarray:
-        x = x.astype(np.float32, copy=False)
+        x = x[:, self._numeric_idx].astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
         rng = np.random.default_rng(self._SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # KS/CvM/FET/MMD/LSDD are continuous-only -- drop categorical columns
+        # (a no-op on all-numeric datasets like energy/occupancy) and narrow
+        # self.features to match, so per-feature results stay aligned.
+        # ChiSquareTest/MixedTypeTabularData need categorical columns *kept*
+        # (encoded, not dropped) and override this in BaseMixedTypeTest below.
+        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self.features = [self.features[i] for i in self._numeric_idx]
         self.detector = self.detector_class(self._subsample(x_reference), **self.config)
 
     def test(self, x_test: np.ndarray) -> None:
@@ -255,7 +268,57 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         return result
 
 
-class ChiSquareTest(BaseUnivariateTest):
+class BaseMixedTypeTest(BaseUnivariateTest):
+    """Base for detectors that need categorical columns kept, not dropped.
+
+    Unlike the continuous-only BaseUnivariateTest.fit (KS/CvM/FET/MMD/LSDD),
+    ChiSquareTest and MixedTypeTabularData are specifically meant to test
+    categorical features, so instead of dropping non-numeric columns, this
+    label-encodes them to integers (fit on the reference split, reused as-is
+    for testing; a category unseen in the reference is coded -1). A no-op on
+    all-numeric datasets like energy/occupancy: no columns to encode, and
+    every column is kept either way.
+    """
+
+    #: Whether to build an explicit `categories_per_feature` dict for the
+    #: detector. ChiSquareDrift already treats every feature as categorical
+    #: when it's None (matching today's energy/occupancy behaviour either
+    #: way); TabularDrift means the *opposite* ("nothing is categorical")
+    #: when it's None, so MixedTypeTabularData needs the dict built
+    #: explicitly or it silently runs KS-only on every feature.
+    infer_categories_per_feature: bool = False
+
+    def _encode(self, x: np.ndarray, fit: bool) -> np.ndarray:
+        encoded = x.astype(object).copy()
+        if fit:
+            self._categorical_idx = [
+                i for i in range(x.shape[1]) if i not in utils.numeric_column_indices(x)
+            ]
+            self._category_maps: dict[int, dict[Any, int]] = {}
+        for i in self._categorical_idx:
+            if fit:
+                codes, uniques = pd.factorize(x[:, i], sort=True)
+                self._category_maps[i] = {value: code for code, value in enumerate(uniques)}
+                encoded[:, i] = codes
+            else:
+                lookup = self._category_maps[i]
+                encoded[:, i] = [lookup.get(value, -1) for value in x[:, i]]
+        return encoded.astype(np.float64)
+
+    def fit(self, x_reference: np.ndarray) -> None:
+        encoded = self._encode(x_reference, fit=True)
+        self._numeric_idx = list(range(encoded.shape[1]))  # keep every column
+        config = dict(self.config)
+        if self.infer_categories_per_feature and self._categorical_idx:
+            config["categories_per_feature"] = {i: None for i in self._categorical_idx}
+        self.detector = self.detector_class(self._subsample(encoded), **config)
+
+    def test(self, x_test: np.ndarray) -> None:
+        encoded = self._encode(x_test, fit=False)
+        self.drift = self.detector.predict(self._subsample(encoded), drift_type="feature")
+
+
+class ChiSquareTest(BaseMixedTypeTest):
     """Chi-square Test"""
 
     detector_class = cd.ChiSquareDrift
@@ -325,9 +388,10 @@ class FisherExactTest(BaseUnivariateTest):
         "data_type": None,
     }
 
-class MixedTypeTabularData(BaseUnivariateTest):
+class MixedTypeTabularData(BaseMixedTypeTest):
     """Mixed Type Tabular Data"""
 
+    infer_categories_per_feature = True
     detector_class = cd.TabularDrift
     config = {
         "p_val": 0.05,
