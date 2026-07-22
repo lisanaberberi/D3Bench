@@ -66,6 +66,20 @@ class Tool(ABC):
         """Call to the preprocess method with a copy of the data."""
         return self.preprocess(df.copy())
 
+    def usable_features(self, test: type) -> list[str]:
+        """Return the subset of ``data.features`` a given method will see.
+
+        Job builds each method's detector (one per feature, for tools that
+        report per-column like Evidently) from this list *before*
+        ``preprocess`` ever runs, so it must be derivable from raw dtypes
+        alone. ``test`` is the detector class Job is about to instantiate
+        (``benchmark.test``), so tools whose methods split by column kind
+        (e.g. Evidently: continuous-only methods vs. categorical-only ones)
+        can pick a different subset per method. Defaults to every declared
+        feature, ignoring ``test``.
+        """
+        return self.data.features
+
     @cached_property
     def reference_data(self) -> Any:
         """Return the reference data."""
@@ -124,7 +138,13 @@ class Frouros(Tool):
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         df.drop(columns={"time"}, inplace=True)
         data = [df[feature].to_numpy() for feature in df.columns]
-        return np.stack(data).T
+        # dtype=object preserves each column's native scalar type; np.stack would
+        # coerce the *whole* array to string dtype the moment one column is
+        # non-numeric (verified: even int columns turn into '1'), silently
+        # corrupting numeric columns before frouros.py ever sees them. A no-op
+        # for all-numeric datasets (energy/occupancy): astype(float32/float64)
+        # downstream produces bit-identical values either way.
+        return np.array(data, dtype=object).T
 
 
 class Evidently(Tool):
@@ -135,17 +155,25 @@ class Evidently(Tool):
     online_dd_methods: dict[methods.OnlineDD, Any] = {}
     batch_cd_methods: dict[methods.BatchCD, Any] = {}
     batch_dd_methods: dict[methods.BatchDD, Any] = {
-        # TODO: Commented only categorical methods, to test them, data needs to have categorical columns
         methods.BatchDD.KOLMOGOROV_SMIRNOV_TEST: tools_evidently.KolmogorovSmirnovTest,
-        # methods.BatchDD.CHI_SQUARE_TEST: tools_evidently.ChiSquareTest,
-        # methods.BatchDD.Z_TEST: tools_evidently.ZTest,
+        methods.BatchDD.CHI_SQUARE_TEST: tools_evidently.ChiSquareTest,
+        methods.BatchDD.Z_TEST: tools_evidently.ZTest,
         methods.BatchDD.WASSERSTEIN_DISTANCE: tools_evidently.WassersteinDistance,
         methods.BatchDD.KULLBACK_LEIBLER_DIVERGENCE_DRIFT_DETECTION: tools_evidently.KullbackLeiblerDivergenceDriftDetection,
         methods.BatchDD.POPULATION_STABILITY_INDEX: tools_evidently.PopulationStabilityIndex,
         methods.BatchDD.JENSEN_SHANNON_DIVERGENCE_DRIFT_DETECTION: tools_evidently.JensenShannonDivergenceDriftDetection,
         methods.BatchDD.ANDERSON_DARLING_TEST: tools_evidently.AndersonDarlingTest,
+        # FISHER_EXACT_TEST: evidently's fisher_exact_stattest requires
+        # reference_data and current_data to be the *same length*, which no
+        # real drift scenario satisfies (reference/testing are different
+        # splits by construction) -- always empty, so left disabled.
         # methods.BatchDD.FISHER_EXACT_TEST: tools_evidently.FisherExactTest,
         methods.BatchDD.CRAMER_VON_MISES_TEST: tools_evidently.CramerVonMisesTest,
+        # G_TEST: evidently's g_stattest feeds raw (unnormalized) category
+        # counts straight into scipy.stats.power_divergence, which requires
+        # sum(reference) == sum(testing) -- fails on any scenario where the
+        # two splits differ in size (i.e. essentially all of them here).
+        # Always empty, so left disabled.
         # methods.BatchDD.G_TEST: tools_evidently.GTest,
         methods.BatchDD.HELLINGER_DISTANCE: tools_evidently.HellingerDistance,
         methods.BatchDD.MANN_WHITNEY_U_TEST: tools_evidently.MannWhitneyUTest,
@@ -153,12 +181,32 @@ class Evidently(Tool):
         methods.BatchDD.EPPS_SINGLETON_TEST: tools_evidently.EppsSingletonTest,
         methods.BatchDD.T_TEST: tools_evidently.TTest,
         methods.BatchDD.EMPIRICAL_MAXIMUM_MEAN_DISCREPANCY: tools_evidently.EmpiricalMaximumMeanDiscrepancy, # this is not categorical
-        # methods.BatchDD.TOTAL_VARIATION_DISTANCE: tools_evidently.TotalVariationDistance,
+        methods.BatchDD.TOTAL_VARIATION_DISTANCE: tools_evidently.TotalVariationDistance,
     }
+
+    def usable_features(self, test: type) -> list[str]:
+        """Split features by dtype: categorical methods only see non-numeric
+        columns, continuous ones (the majority, see batch_dd_methods above)
+        only see numeric columns -- mirrors the numerical/categorical split
+        declared on the dataset itself in preprocess()."""
+        numeric = set(self.data.reference.select_dtypes(include="number").columns)
+        wants_categorical = getattr(test, "categorical", False)
+        return [
+            f for f in self.data.features
+            if (f not in numeric) == wants_categorical
+        ]  # fmt: skip
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         df.drop(columns={"time"}, inplace=True)
-        schema = EDataDefinition(numerical_columns=list(df.columns))
+        # Declare each column's real dtype instead of blanket-labeling
+        # everything numerical -- evidently's np.isinf() stats collection
+        # crashes on a string column (e.g. motor's VehBrand) declared
+        # numerical. Kept in sync with usable_features(), which Job uses to
+        # build each method's per-feature detectors before preprocess runs;
+        # a method never gets a Report for a column outside its own kind.
+        numerical = list(df.select_dtypes(include="number").columns)
+        categorical = [c for c in df.columns if c not in numerical]
+        schema = EDataDefinition(numerical_columns=numerical, categorical_columns=categorical)
         return EDataset.from_pandas(df, data_definition=schema)
 
 
@@ -234,7 +282,13 @@ class AlibiDetect(Tool):
     def preprocess(self, df: pd.DataFrame) -> np.ndarray:
         df.drop(columns={"time"}, inplace=True)
         data = [df[feature].to_numpy() for feature in df.columns]
-        return np.stack(data).T
+        # dtype=object preserves each column's native scalar type; np.stack would
+        # coerce the *whole* array to string dtype the moment one column is
+        # non-numeric (verified: even int columns turn into '1'), silently
+        # corrupting numeric columns before alibi.py ever sees them. A no-op for
+        # all-numeric datasets (energy/occupancy): astype(float32) downstream
+        # produces bit-identical values either way.
+        return np.array(data, dtype=object).T
 
 
 class River(Tool):
@@ -257,7 +311,21 @@ class River(Tool):
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         df.drop(columns={"time"}, inplace=True)
-        data = [df[feature].to_numpy() for feature in df.columns]
+        # Every River method is online_cd: one detector fed the L2-norm of the
+        # whole feature row (no per-feature indexing anywhere in river.py), so
+        # dropping non-numeric columns here is safe for every method River has.
+        # np.stack coerces the *entire* array to string dtype the moment one
+        # column is non-numeric (verified: even int columns turn into '1'),
+        # which is silent on all-numeric datasets (energy/occupancy, where
+        # this is a no-op) but corrupts np.linalg.norm on mixed data (motor).
+        numeric_df = df.select_dtypes(include="number")
+        dropped = set(df.columns) - set(numeric_df.columns)
+        if dropped:
+            logger.info(
+                "River: dropping non-numeric columns %s from the concept-drift feature vector",
+                sorted(dropped),
+            )
+        data = [numeric_df[feature].to_numpy() for feature in numeric_df.columns]
         return np.stack(data).T
 
 
