@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 class BaseTabularDetectors(utils.BaseTestMethod, ABC):
     """Base class for Evidently tabular detectors."""
 
+    #: Whether this method operates on categorical columns rather than
+    #: numeric ones. Read by Evidently.usable_features() (tools/__init__.py)
+    #: to decide which of data.features this method's per-column Reports get
+    #: built for -- before preprocess ever runs, so it can't inspect dtypes
+    #: itself.
+    categorical: bool = False
+
     def __init__(self, features: list[str]) -> None:
         self.reports = {
             f: Report([ValueDrift(column=f, method=self.detector_reference)], include_tests=True)
@@ -90,12 +97,14 @@ class KolmogorovSmirnovTest(BaseTabularDetectors):
 class ChiSquareTest(BaseTabularDetectors):
     """Chi-Square Test"""
 
+    categorical = True
     detector_reference = "chisquare"
 
 
 class ZTest(BaseTabularDetectors):
     """Z Test"""
 
+    categorical = True
     detector_reference = "z"
 
 
@@ -132,6 +141,7 @@ class AndersonDarlingTest(BaseTabularDetectors):
 class FisherExactTest(BaseTabularDetectors):
     """Fisher Exact Test"""
 
+    categorical = True
     detector_reference = "fisher_exact"
 
 
@@ -144,7 +154,8 @@ class CramerVonMisesTest(BaseTabularDetectors):
 class GTest(BaseTabularDetectors):
     """G Test"""
 
-    detector_reference = "g-test"
+    categorical = True
+    detector_reference = "g_test"
 
 
 class HellingerDistance(BaseTabularDetectors):
@@ -177,43 +188,59 @@ class TTest(BaseTabularDetectors):
     detector_reference = "t_test"
 
 
-class EmpiricalMaximumMeanDiscrepancy(BaseTabularDetectors):
-    """Empirical Maximum Mean Discrepancy
+class SubsampledTabularDetectors(BaseTabularDetectors, ABC):
+    """Base for Evidently methods whose cost blows up with sample size.
 
-    # detector_reference = "empirical_mmd"
+    Both known cases here re-run their full statistic once per resample:
+    MMD builds an O(n^2) kernel Gram matrix (~88 GB at the Energy 35k/70k
+    split -- swaps the machine rather than erroring); TVD runs evidently's
+    1000-iteration permutation test, each iteration recomputing the
+    statistic over the whole concatenated reference+testing array (~450s
+    for a single column at Motor's ~514k/164k split, so ~4.5h across every
+    categorical column x the benchmark's repeated runtime/cputime/memory
+    criteria). Cap both sides to _MAX_SAMPLES, the standard mitigation for
+    this kind of test.
 
-    MMD's kernel Gram matrix is O(n^2): ~88 GB at the Energy 35k/70k split,
-    which swaps the machine rather than erroring. Cap both sides to _MAX_SAMPLES,
-    the standard mitigation for kernel two-sample tests on large samples.
-
-    NOTE: this detector sees far fewer samples than the other Evidently
-    detectors (which run on the full split), so its power and runtime are NOT
-    comparable to theirs. Record _MAX_SAMPLES alongside the result.
+    NOTE: subclasses see far fewer samples than the other Evidently
+    detectors (which run on the full split), so their power and runtime are
+    NOT comparable to the rest. Record _MAX_SAMPLES alongside the result.
     """
 
-    detector_reference = "empirical_mmd"
     _MAX_SAMPLES = 1000
     _SEED = 31
 
     def _subsample(self, dataset: EDataset) -> EDataset:
-        df = dataset.as_dataframe()                   
+        df = dataset.as_dataframe()
         if len(df) > self._MAX_SAMPLES:
             df = df.sample(n=self._MAX_SAMPLES, random_state=self._SEED)
-        schema = EDataDefinition(numerical_columns=list(df.columns))
+        # Preserve the numerical/categorical split preprocess() already
+        # declared, rather than re-declaring everything numerical -- this
+        # class is used by both continuous (MMD) and categorical (TVD)
+        # methods, and usable_features() already restricts which columns
+        # get a Report built, so the unused kind can stay in the frame.
+        numerical = list(df.select_dtypes(include="number").columns)
+        categorical = [c for c in df.columns if c not in numerical]
+        schema = EDataDefinition(numerical_columns=numerical, categorical_columns=categorical)
         return EDataset.from_pandas(df, data_definition=schema)
 
     def fit(self, x_reference: EDataset) -> None:
-        # subsample the reference before stashing; name-mangled attr from the base
-        self._BaseTabularDetectors_x_reference = self._subsample(x_reference)
+        self._x_reference_subsampled = self._subsample(x_reference)
         raise NotImplementedError("Evidently does not provide fit method")
 
     def test(self, x_test: EDataset) -> None:
-        x_reference = self._BaseTabularDetectors_x_reference
+        x_reference = self._x_reference_subsampled
         x_test = self._subsample(x_test)
         self.results = self._run_reports(x_reference, x_test)
 
 
-class TotalVariationDistance(BaseTabularDetectors):
+class EmpiricalMaximumMeanDiscrepancy(SubsampledTabularDetectors):
+    """Empirical Maximum Mean Discrepancy"""
+
+    detector_reference = "empirical_mmd"
+
+
+class TotalVariationDistance(SubsampledTabularDetectors):
     """Total Variation Distance"""
 
+    categorical = True
     detector_reference = "TVD"
