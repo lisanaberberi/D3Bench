@@ -215,7 +215,7 @@ class Job:
 
     def __init__(self, benchmark: BaseBenchmark) -> None:
         self.benchmark = benchmark
-        self.detector = benchmark.test(benchmark.tool.data.features)
+        self.detector = benchmark.test(benchmark.tool.usable_features(benchmark.test))
 
     def fit(self) -> None:
         """Run the benchmark with the given parameters."""

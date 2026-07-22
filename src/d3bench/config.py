@@ -39,12 +39,14 @@ Framework: TypeAlias = Literal[
 Datafile: TypeAlias = Literal[
     "energy",
     "occupancy",
+    "motor",
 ]
 
 
 # Define the criteria evaluations for the benchmark
 Criteria: TypeAlias = Literal[
     "functional",
+    "statistics",
     "runtime",
     "cputime",
     "memory",
