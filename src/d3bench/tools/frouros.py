@@ -29,6 +29,33 @@ _PERMUTATION_TEST_KWARGS: dict[str, Any] = {
  
 # Seed shared by every stochastic component in this module.
 _SEED = 31
+
+# Cap on samples per side for permutation-heavy batch detectors that have no
+# other reason to scale with n (see `max_samples` on BaseBatchDD). Set above
+# every existing dataset's largest split side (Energy: 70_052, Occupancy:
+# 30_464) so it is a strict no-op there -- reference/testing sizes, and thus
+# every reported statistic, stay bit-identical. It only engages for splits
+# larger than that, e.g. French Motor's ~514k/164k Region split, where these
+# same detectors were measured to take 4-46s *per feature, per call* (and
+# each method's fit+test pipeline runs ~10x over a scenario's criteria) --
+# capping brings that down to well under a second up to ~8s (BWSTest).
+_MAX_SAMPLES = 80_000
+
+
+def _subsample_rows(x: np.ndarray, max_samples: int) -> np.ndarray:
+    """Deterministically cap x's row count, preserving relative row order.
+
+    Unlike BaseBatchDD._subsample (order-invariant batch statistics), this
+    backs BaseOnlineCD.test()'s row-by-row streaming loop, where a detector
+    like KSWIN or ADWIN is sensitive to sequence -- so sampled indices are
+    sorted rather than left in random draw order. A no-op on every existing
+    dataset (see _MAX_SAMPLES); only French Motor's testing side is larger.
+    """
+    if len(x) <= max_samples:
+        return x
+    rng = np.random.default_rng(seed=_SEED)
+    idx = np.sort(rng.choice(len(x), size=max_samples, replace=False))
+    return x[idx]
  
  
 def _permutation_test() -> PermutationTestDistanceBased:
@@ -70,11 +97,26 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # See:
         # https://frouros.readthedocs.io/en/latest/examples/concept_drift/DDM_advance.html#warm-up-phase
         # !!! only 1000 instances are used for training, very high time consumption
+        #
+        # Every online CD method feeds one detector the L2-norm of the whole
+        # feature row (no per-feature indexing anywhere below), so dropping
+        # categorical columns is safe for all of them -- a no-op on
+        # all-numeric datasets like energy/occupancy.
+        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        x_reference = x_reference[:, self._numeric_idx].astype(np.float64)
         for x in np.linalg.norm(x_reference[:1000], ord=2, axis=1):
             self.detector.update(value=x)
 
     def test(self, x_test: np.ndarray) -> None:
         # Only one feature is accepted
+        x_test = x_test[:, self._numeric_idx].astype(np.float64)
+        # Each row is fed through a pure-Python per-instance update() loop with
+        # no internal batching -- cheap per call on energy/occupancy's test
+        # sizes, but e.g. KSWIN was measured at ~35s/call (and this whole
+        # fit+test pipeline runs ~10x per method per scenario) on French
+        # Motor's ~164k-row testing split. Capped the same way as the batch
+        # detectors' _subsample, and just as much of a no-op there.
+        x_test = _subsample_rows(x_test, _MAX_SAMPLES)
         for x in np.linalg.norm(x_test, ord=2, axis=1):
             self.detector.update(value=x)
 
@@ -260,12 +302,19 @@ class OnlineMaximumMeanDiscrepancy(utils.BaseTestMethod):
         self.distance = None
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # RBF-kernel MMD is continuous-only -- drop categorical columns (a
+        # no-op on all-numeric datasets like energy/occupancy). result() only
+        # reports a single scalar (no per-feature dict), so no self.features
+        # bookkeeping is needed to stay aligned.
+        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        x_reference = x_reference[:, self._numeric_idx].astype(np.float64)
         self.detector.fit(X=x_reference)
 
     def test(self, x_test: np.ndarray) -> None:
         # Take only the first 10 instances for testing as window size is 10.
         # update() returns (None, {}) until the window fills, then
         # (DistanceResult(distance=...), {}); unwrap it to a plain float.
+        x_test = x_test[:, self._numeric_idx].astype(np.float64)
         result = [self.detector.update(value=x)[0] for x in x_test[:10]][-1]
         self.distance = result.distance if result is not None else None
 
@@ -288,25 +337,32 @@ class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
         self.results: list[Any] = [None for _ in features]
 
     def fit(self, x_reference: np.ndarray) -> None:
-        # Only one feature is accepted
-        for i, _ in enumerate(self.features):
+        # KS is continuous-only -- only fit detectors for numeric columns (a
+        # no-op on all-numeric datasets like energy/occupancy); self.detectors
+        # is already built one-per-feature in __init__ (before any data is
+        # seen), so categorical positions are simply left unfit/unused rather
+        # than resized away.
+        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        for i in self._numeric_idx:
             # 1000 values otherwise "IndexError": invalid index to scalar variable.
-            self.detectors[i].fit(X=x_reference[:1000, i])
+            self.detectors[i].fit(X=x_reference[:1000, i].astype(np.float64))
 
     def test(self, x_test: np.ndarray) -> None:
-        # Only one feature is accepted
-        for i, _ in enumerate(self.features):
-            res = [self.detectors[i].update(value=x)[0] for x in x_test[:10, i]][-1]
+        for i in self._numeric_idx:
+            res = [
+                self.detectors[i].update(value=x)[0]
+                for x in x_test[:10, i].astype(np.float64)
+            ][-1]
             self.results[i] = res
 
     def result(self) -> dict[str, Any]:
         return {
             "statistic": {
-                feature: self.results[i].statistic for i, feature in enumerate(self.features)
+                self.features[i]: self.results[i].statistic for i in self._numeric_idx
             },
             "drift": {
-                feature: self.results[i].p_value < SIGNIFICANCE_LEVEL
-                for i, feature in enumerate(self.features)
+                self.features[i]: self.results[i].p_value < SIGNIFICANCE_LEVEL
+                for i in self._numeric_idx
             },
         }
 
@@ -338,32 +394,39 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
     #: REBIND in subclasses (`compare_kwargs = {...}`); never mutate in place --
     #: this is a class attribute shared by every subclass that doesn't override it.
     compare_kwargs: dict[str, Any] = {}
- 
+
+    #: False (default): continuous-only detectors (KS, Welch, Bhattacharyya, ...)
+    #: drop categorical columns -- a no-op on all-numeric datasets like
+    #: energy/occupancy. ChiSquareTest overrides this to True: it counts raw
+    #: value frequencies, which is meaningful for categorical *and* continuous
+    #: columns alike, so nothing needs to be dropped.
+    keep_categorical_columns: bool = False
+
     def __init__(self, features: list[str]) -> None:
         self.features = features
         self.detectors = [self._build_detector() for _ in features]
-        self.results: list[Any] = []
+        self.results: dict[int, Any] = {}
 
     @property
     @abstractmethod
     def config(self) -> Any:
         """Property that returns the detector configuration."""
- 
+
     @property
     @abstractmethod
     def detector_class(self) -> Any:
         """Property that returns the detector class."""
- 
+
     def _build_detector(self) -> Any:
         """Instantiate one detector, with its own permutation-test callback if needed."""
         config = dict(self.config)
         if self.distance_based:
             config["callbacks"] = _permutation_test()
         return self.detector_class(**config)
- 
+
     def _subsample(self, x: np.ndarray) -> np.ndarray:
         """Draw at most `max_samples` rows, deterministically.
- 
+
         Reseeded on every call: `test()` runs 7x per method under the default
         scenario (3 runtime repetitions + 3 cpu-runtime + 1 functional), so a
         stateful rng would hand each pass a different draw and the reported
@@ -373,19 +436,40 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
             return x
         rng = np.random.default_rng(seed=_SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
- 
+
+    def _column(self, x: np.ndarray, i: int) -> np.ndarray:
+        """One feature column, cast back to a real numeric dtype where safe.
+
+        x is object-dtype (Frouros.preprocess preserves native per-column
+        types rather than letting np.stack silently coerce everything to
+        strings). Several detectors (JS, KL, MMD, BWS, Mann-Whitney, Welch-T)
+        require an actual float array and raise on dtype=object even when
+        every value is numeric, so cast explicitly here -- except for
+        ChiSquareTest (keep_categorical_columns=True), whose categorical
+        columns can hold raw strings that can't be cast to float.
+        """
+        column = x[:, i]
+        return column if self.keep_categorical_columns else column.astype(np.float64)
+
     def fit(self, x_reference: np.ndarray) -> None:
+        # self.detectors is already built one-per-feature in __init__ (before
+        # any data is seen), so categorical positions are simply left
+        # unfit/unused below rather than resized away.
+        if self.keep_categorical_columns:
+            self._numeric_idx = list(range(x_reference.shape[1]))
+        else:
+            self._numeric_idx = utils.numeric_column_indices(x_reference)
         x_reference = self._subsample(x_reference)
-        for i, _ in enumerate(self.features):
-            self.detectors[i].fit(X=x_reference[:, i])
- 
+        for i in self._numeric_idx:
+            self.detectors[i].fit(X=self._column(x_reference, i))
+
     def test(self, x_test: np.ndarray) -> None:
         x_test = self._subsample(x_test)
-        self.results = [
-            self.detectors[i].compare(X=x_test[:, i], **self.compare_kwargs)
-            for i, _ in enumerate(self.features)
-        ]
- 
+        self.results = {
+            i: self.detectors[i].compare(X=self._column(x_test, i), **self.compare_kwargs)
+            for i in self._numeric_idx
+        }
+
     def _p_value(self, index: int) -> float:
         """Statistical tests carry their own p-value; distance-based detectors
         take theirs from the permutation-test callback log."""
@@ -406,23 +490,21 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
         return stat_result.statistic
 
     def result(self) -> dict[str, Any]:
-        p_values = [self._p_value(i) for i, _ in enumerate(self.features)]
         return {
-            "statistic": {
-                feature: self._statistic(i) for i, feature in enumerate(self.features)
-            },
+            "statistic": {self.features[i]: self._statistic(i) for i in self._numeric_idx},
             "drift": {
-                feature: p_value < SIGNIFICANCE_LEVEL
-                for feature, p_value in zip(self.features, p_values)
+                self.features[i]: self._p_value(i) < SIGNIFICANCE_LEVEL
+                for i in self._numeric_idx
             },
         }
- 
+
 
 class BhattacharyyaDistance(BaseBatchDD):
     """Bhattacharyya Distance"""
 
     detector_class = data_drift.BhattacharyyaDistance
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -433,6 +515,7 @@ class EarthMoverDistance(BaseBatchDD):
 
     detector_class = data_drift.EMD
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config: dict[str, Any] = {}
 
 
@@ -442,6 +525,7 @@ class EnergyDistance(BaseBatchDD):
 
     detector_class = data_drift.EnergyDistance
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config: dict[str, Any] = {}
 
 
@@ -451,6 +535,7 @@ class HellingerDistance(BaseBatchDD):
 
     detector_class = data_drift.HellingerDistance
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -462,6 +547,7 @@ class HistogramIntersectionNormalizedComplement(BaseBatchDD):
 
     detector_class = data_drift.HINormalizedComplement
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -473,6 +559,7 @@ class JensenShannonDivergenceDriftDetection(BaseBatchDD):
 
     detector_class = data_drift.JS
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -483,6 +570,7 @@ class KullbackLeiblerDivergenceDriftDetection(BaseBatchDD):
 
     detector_class = data_drift.KL
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -514,6 +602,7 @@ class PopulationStabilityIndex(BaseBatchDD):
 
     detector_class = data_drift.PSI
     distance_based = True
+    max_samples = _MAX_SAMPLES
     config = {
         "num_bins": 10,  # number of bins in which to divide probabilities
     }
@@ -539,15 +628,18 @@ class BaumgartnerWeissSchindlerTest(BaseBatchDD):
     """Baumgartner Weiss Schindler Test"""
 
     detector_class = data_drift.BWSTest
+    max_samples = _MAX_SAMPLES
     config = {
         "callbacks": None,
     }
-    
+
     # scipy's bws_test has no asymptotic null, so method=None falls back to
     # PermutationMethod(n_resamples=9999) *unbatched*, which materialises a
     # (9999, n_ref + n_test) float64 array -- ~21 GB at Occupancy's 16k/30k
     # split, i.e. an OOM. batch= bounds the working set; 999 resamples still
-    # gives a p-value floor of 0.001.
+    # gives a p-value floor of 0.001. Still the single slowest detector per
+    # feature even after batching (measured ~46s/feature on French Motor's
+    # unsampled ~514k/164k split, vs ~8s/feature at the max_samples cap).
     compare_kwargs = {"method": PermutationMethod(n_resamples=999, batch=50, random_state=_SEED),
     }
 
@@ -556,6 +648,7 @@ class BaumgartnerWeissSchindlerTest(BaseBatchDD):
 class ChiSquareTest(BaseBatchDD):
     """Chi-square Test"""
 
+    keep_categorical_columns = True
     detector_class = data_drift.ChiSquareTest
     config = {
         "callbacks": None,
