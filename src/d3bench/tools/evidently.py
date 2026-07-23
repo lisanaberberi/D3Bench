@@ -213,14 +213,18 @@ class SubsampledTabularDetectors(BaseTabularDetectors, ABC):
         df = dataset.as_dataframe()
         if len(df) > self._MAX_SAMPLES:
             df = df.sample(n=self._MAX_SAMPLES, random_state=self._SEED)
-        # Preserve the numerical/categorical split preprocess() already
-        # declared, rather than re-declaring everything numerical -- this
-        # class is used by both continuous (MMD) and categorical (TVD)
-        # methods, and usable_features() already restricts which columns
-        # get a Report built, so the unused kind can stay in the frame.
-        numerical = list(df.select_dtypes(include="number").columns)
-        categorical = [c for c in df.columns if c not in numerical]
-        schema = EDataDefinition(numerical_columns=numerical, categorical_columns=categorical)
+        # Reuse the numerical/categorical split preprocess() already
+        # declared (dataset.data_definition) -- subsampling only changes
+        # row count, not column kind, so re-deriving from raw pandas dtype
+        # here (as this used to) would silently override any column
+        # intentionally declared against its dtype (e.g. DataMotorPrior's
+        # ClaimNb, forced categorical in Evidently._numeric_columns so
+        # Chi-square/Z-Test/TVD see it despite being int64).
+        definition = dataset.data_definition
+        schema = EDataDefinition(
+            numerical_columns=definition.numerical_columns,
+            categorical_columns=definition.categorical_columns,
+        )
         return EDataset.from_pandas(df, data_definition=schema)
 
     def fit(self, x_reference: EDataset) -> None:
