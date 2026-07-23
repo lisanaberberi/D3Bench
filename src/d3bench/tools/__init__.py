@@ -66,6 +66,21 @@ class Tool(ABC):
         """Call to the preprocess method with a copy of the data."""
         return self.preprocess(df.copy())
 
+    @property
+    def _monitored_columns(self) -> list[str]:
+        """Columns preprocess()/usable_features() operate on: the X features
+        for covariate scenarios, or just the label column for prior-drift
+        scenarios (data.target). Centralized here rather than in each
+        adapter's preprocess() -- Frouros/River/Alibi-Detect stack every
+        column physically present in the frame they're handed regardless of
+        data.features, so routing the column selection once here (used by
+        both usable_features() and reference_data/testing_data below) keeps
+        every adapter correctly scoped with no per-adapter changes."""
+        if self.data.drift_type == "prior":
+            assert self.data.target is not None
+            return [self.data.target]
+        return self.data.features
+
     def usable_features(self, test: type) -> list[str]:
         """Return the subset of ``data.features`` a given method will see.
 
@@ -75,20 +90,20 @@ class Tool(ABC):
         alone. ``test`` is the detector class Job is about to instantiate
         (``benchmark.test``), so tools whose methods split by column kind
         (e.g. Evidently: continuous-only methods vs. categorical-only ones)
-        can pick a different subset per method. Defaults to every declared
-        feature, ignoring ``test``.
+        can pick a different subset per method. Defaults to every monitored
+        column (see ``_monitored_columns``), ignoring ``test``.
         """
-        return self.data.features
+        return self._monitored_columns
 
     @cached_property
     def reference_data(self) -> Any:
         """Return the reference data."""
-        return self.preprocess(self.data.reference.copy())
+        return self.preprocess(self.data.reference[self._monitored_columns + ["time"]].copy())
 
     @cached_property
     def testing_data(self) -> Any:
         """Return the testing data."""
-        return self.preprocess(self.data.testing.copy())
+        return self.preprocess(self.data.testing[self._monitored_columns + ["time"]].copy())
 
 
 class Frouros(Tool):
@@ -192,7 +207,7 @@ class Evidently(Tool):
         numeric = set(self.data.reference.select_dtypes(include="number").columns)
         wants_categorical = getattr(test, "categorical", False)
         return [
-            f for f in self.data.features
+            f for f in self._monitored_columns
             if (f not in numeric) == wants_categorical
         ]  # fmt: skip
 
