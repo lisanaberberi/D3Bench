@@ -16,7 +16,7 @@ from d3bench import reports
 from d3bench.config import Criteria, Method
 from d3bench.reports import Report, TestInformation
 from d3bench.tools import Tool
-from d3bench.utils import BaseTestMethod, Data
+from d3bench.utils import BaseTestMethod, Data, MethodNotApplicable
 
 # pylint: disable=too-few-public-methods
 logger = logging.getLogger(__name__)
@@ -189,6 +189,9 @@ def _try_report(method: Method, test: Test, tool: Tool, criteria: set[Criteria])
     """
     try:
         return Benchmark(method, test, tool).report(criteria)
+    except MethodNotApplicable as exc:
+        logger.warning("Skipping %s/%s: not supported (%s)", tool.name, method, exc)
+        return None
     except Exception:  # pylint: disable=broad-except
         logger.exception("Skipping %s/%s: benchmark failed", tool.name, method)
         return None
