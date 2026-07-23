@@ -20,7 +20,7 @@ import d3bench.tools.nannyml as tools_nannyml
 import d3bench.tools.river as tools_river
 from d3bench import methods
 from d3bench.config import Framework
-from d3bench.utils import Data
+from d3bench.utils import Data, MethodNotApplicable
 
 # pylint: disable=too-few-public-methods
 # pylint: disable=line-too-long
@@ -352,11 +352,9 @@ class River(Tool):
             # report "no drift" not because nothing shifted, but because
             # it was fed no signal at all. That's a false negative
             # disguised as a real result, worse than failing loudly: raise
-            # instead, so _try_report's existing catch-all skips this
-            # tool/method combination the same way it already does for any
-            # other unsupported case, with a message that explains why
-            # rather than a bare "need at least one array to stack".
-            raise ValueError(
+            # MethodNotApplicable instead of a bare ValueError, so
+            # _try_report logs one short line instead of a full traceback.
+            raise MethodNotApplicable(
                 "River has no numeric columns to monitor here -- its concept-drift "
                 "methods only support a single combined numeric feature vector (no "
                 "per-column/categorical path), and every monitored column for this "

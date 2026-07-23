@@ -112,10 +112,9 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
             # (observed with STEPD) tripping on the degenerate/zero-variance
             # input for reasons unrelated to real drift. Either way that's a
             # meaningless result dressed up as a real one, worse than
-            # failing loudly: raise instead, so _try_report's existing
-            # catch-all skips this tool/method combination the same way it
-            # already does for any other unsupported case.
-            raise ValueError(
+            # failing loudly: raise MethodNotApplicable instead, so
+            # _try_report logs one short line instead of a full traceback.
+            raise utils.MethodNotApplicable(
                 "Frouros online concept-drift detectors have no numeric columns to "
                 "monitor here -- they only support a single combined numeric feature "
                 "vector (no per-column/categorical path), and every monitored column "
@@ -325,6 +324,17 @@ class OnlineMaximumMeanDiscrepancy(utils.BaseTestMethod):
         # reports a single scalar (no per-feature dict), so no self.features
         # bookkeeping is needed to stay aligned.
         self._numeric_idx = utils.numeric_column_indices(x_reference)
+        if not self._numeric_idx:
+            # e.g. drift_type == "prior": nothing numeric to kernelize.
+            # frouros's own DimensionError below already catches this, but
+            # raising MethodNotApplicable here first gives _try_report a
+            # short, informative line instead of frouros's internal
+            # "Dimensions of X (0)" traceback.
+            raise utils.MethodNotApplicable(
+                "Frouros's online MMD needs at least one numeric column to build a "
+                "kernel from, and every monitored column for this scenario is "
+                "non-numeric."
+            )
         x_reference = x_reference[:, self._numeric_idx].astype(np.float64)
         self.detector.fit(X=x_reference)
 
