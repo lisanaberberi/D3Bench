@@ -203,7 +203,11 @@ class Evidently(Tool):
         """Split features by dtype: categorical methods only see non-numeric
         columns, continuous ones (the majority, see batch_dd_methods above)
         only see numeric columns -- mirrors the numerical/categorical split
-        declared on the dataset itself in preprocess()."""
+        declared on the dataset itself in preprocess(). Dtype-driven only
+        (e.g. DataMotorPrior's target is stored as explicit "claim"/
+        "no_claim" labels, not relabeled-but-still-numeric values, so this
+        needs no drift_type-specific override -- every tool that inspects
+        this column, by whatever mechanism it uses, agrees it's categorical)."""
         numeric = set(self.data.reference.select_dtypes(include="number").columns)
         wants_categorical = getattr(test, "categorical", False)
         return [
@@ -339,6 +343,24 @@ class River(Tool):
             logger.info(
                 "River: dropping non-numeric columns %s from the concept-drift feature vector",
                 sorted(dropped),
+            )
+        if numeric_df.empty:
+            # e.g. drift_type == "prior": the only monitored column is
+            # DataMotorPrior's categorical target. Silently returning a
+            # 0-column array here would make np.linalg.norm produce a
+            # constant zero stream below -- every detector would then
+            # report "no drift" not because nothing shifted, but because
+            # it was fed no signal at all. That's a false negative
+            # disguised as a real result, worse than failing loudly: raise
+            # instead, so _try_report's existing catch-all skips this
+            # tool/method combination the same way it already does for any
+            # other unsupported case, with a message that explains why
+            # rather than a bare "need at least one array to stack".
+            raise ValueError(
+                "River has no numeric columns to monitor here -- its concept-drift "
+                "methods only support a single combined numeric feature vector (no "
+                "per-column/categorical path), and every monitored column for this "
+                "scenario is non-numeric."
             )
         data = [numeric_df[feature].to_numpy() for feature in numeric_df.columns]
         return np.stack(data).T

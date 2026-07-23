@@ -103,6 +103,24 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # categorical columns is safe for all of them -- a no-op on
         # all-numeric datasets like energy/occupancy.
         self._numeric_idx = utils.numeric_column_indices(x_reference)
+        if not self._numeric_idx:
+            # e.g. drift_type == "prior": the only monitored column is
+            # categorical. x_reference[:, []] is a valid but 0-column array,
+            # and np.linalg.norm over it would silently produce a constant
+            # zero stream -- every detector below would then see zero
+            # variance forever, either trivially reporting "no drift" or
+            # (observed with STEPD) tripping on the degenerate/zero-variance
+            # input for reasons unrelated to real drift. Either way that's a
+            # meaningless result dressed up as a real one, worse than
+            # failing loudly: raise instead, so _try_report's existing
+            # catch-all skips this tool/method combination the same way it
+            # already does for any other unsupported case.
+            raise ValueError(
+                "Frouros online concept-drift detectors have no numeric columns to "
+                "monitor here -- they only support a single combined numeric feature "
+                "vector (no per-column/categorical path), and every monitored column "
+                "for this scenario is non-numeric."
+            )
         x_reference = x_reference[:, self._numeric_idx].astype(np.float64)
         for x in np.linalg.norm(x_reference[:1000], ord=2, axis=1):
             self.detector.update(value=x)

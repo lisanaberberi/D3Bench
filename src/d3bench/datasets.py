@@ -291,10 +291,23 @@ class DataMotorPrior(Dataset):
             candidate_pool, candidate_pool[self.target] > 0, self.target_claim_rate, self.seed
         )
         columns = self.measure_columns + [self.target, "time"]
+        reference = reference[columns].copy()
+        testing = testing[columns].copy()
+        # Store as explicit category labels, not raw counts -- this is what
+        # was actually resampled on (ClaimNb > 0), and matters for
+        # cross-tool fairness: Evidently classifies columns by pandas
+        # dtype, but Frouros/Alibi-Detect classify by trying to cast the
+        # actual VALUES to float, ignoring dtype metadata -- so a dtype
+        # relabeling alone wouldn't make them agree. Only genuinely
+        # non-numeric values make every tool's own classification
+        # mechanism independently and consistently treat this column as
+        # categorical, without needing a per-tool override anywhere.
+        for frame in (reference, testing):
+            frame[self.target] = np.where(frame[self.target] > 0, "claim", "no_claim")
         return Data(
             features=self.measure_columns,
-            reference=reference[columns],
-            testing=testing[columns],
+            reference=reference,
+            testing=testing,
             drift_type="prior",
             target=self.target,
         )

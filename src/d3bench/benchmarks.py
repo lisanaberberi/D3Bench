@@ -85,7 +85,7 @@ class BaseBenchmark(ABC):
             return None
         if isinstance(value, dict):
             return {column: cast(v) for column, v in value.items()}
-        return {feature: cast(value) for feature in self.data.features}
+        return {feature: cast(value) for feature in self.tool._monitored_columns}
 
     def get_functional(self) -> Optional[dict[str, bool]]:
         """Return whether drift was flagged on each monitored column."""
