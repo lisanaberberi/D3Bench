@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union
 
+import numpy as np
 import pandas as pd
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -36,6 +37,17 @@ class Options(BaseSettings):
             "boundary-split."
         ),
     )
+    seed: int = Field(
+        default=31,
+        description="Random seed for semi-synthetic/resampled constructions (e.g. DataMotorPrior).",
+    )
+    target_claim_rate: float = Field(
+        default=0.15,
+        description=(
+            "Target share of policies with >=1 claim in DataMotorPrior's resampled 'current' "
+            "set (natural population rate is ~5.0%, see datafiles/french-motor-paper.pdf Table 1)."
+        ),
+    )
 
 
 class Dataset(ABC):
@@ -53,6 +65,8 @@ class Dataset(ABC):
         self.filter_data()  # Remove data out of limits
         self.boundary = settings.boundary
         self.current_regions = settings.current_regions
+        self.seed = settings.seed
+        self.target_claim_rate = settings.target_claim_rate
 
     @abstractmethod
     def preprocess_time(self) -> pd.DataFrame:
@@ -73,6 +87,7 @@ class Dataset(ABC):
             features=self.measure_columns,
             reference=self.df[train_filter],
             testing=self.df[~train_filter],
+            drift_type="covariate",
         )
 
 
@@ -82,7 +97,7 @@ class DataEnergy(Dataset):
     file_name = "energy_data.csv"
     datetime_columns = ["year", "month", "day", "hour"]
     consumption_unit = "MWh"
-    temperature_unit = "°C"  # TODO: Check if it is correct
+    temperature_unit = "°C"  # Outdoor air temperature
     measure_columns = ["consumption", "temp_outside"]
 
     def __init__(self, building_id: int, *args, **kwds):
@@ -187,4 +202,99 @@ class DataMotor(Dataset):
             features=self.measure_columns,
             reference=self.df.loc[~current_filter, columns],
             testing=self.df.loc[current_filter, columns],
+            drift_type="covariate",
+        )
+
+
+def _random_half_split(df: pd.DataFrame, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Seeded, disjoint 50/50 row split -- stands in for DataMotor's Region
+    grouping for constructions that must NOT carry any covariate-drift signal
+    of their own (DataMotorPrior)."""
+    half_a = df.sample(frac=0.5, random_state=seed)
+    half_b = df.drop(half_a.index)
+    return half_a, half_b
+
+
+def _resample_to_rate(df: pd.DataFrame, positive: pd.Series, target_rate: float, seed: int) -> pd.DataFrame:
+    """Return a subset of df's real rows (no duplication, no replacement) whose
+    `positive` share is target_rate, holding P(X | positive) exactly fixed --
+    every retained row is untouched; only the relative count of positive vs.
+    negative rows changes. Downsamples whichever class is over-represented
+    relative to the target ratio."""
+    rng = np.random.default_rng(seed)
+    pos_idx, neg_idx = df.index[positive], df.index[~positive]
+    n_pos, n_neg = len(pos_idx), len(neg_idx)
+    neg_needed = n_pos * (1 - target_rate) / target_rate
+    if neg_needed <= n_neg:
+        keep_pos, keep_neg = pos_idx.to_numpy(), rng.choice(neg_idx, size=int(neg_needed), replace=False)
+    else:
+        pos_needed = n_neg * target_rate / (1 - target_rate)
+        if pos_needed > n_pos:
+            raise ValueError(
+                f"target_rate={target_rate} infeasible without replacement: "
+                f"pool has {n_pos} positive / {n_neg} negative rows"
+            )
+        keep_pos, keep_neg = rng.choice(pos_idx, size=int(pos_needed), replace=False), neg_idx.to_numpy()
+    return df.loc[np.concatenate([keep_pos, keep_neg])]
+
+
+class DataMotorPrior(Dataset):
+    """Prior-drift (target/label-drift) construction on freMTPL2freq.
+
+    Both reference and current are disjoint random halves of the same
+    portfolio (no group/region signal, unlike DataMotor's covariate split --
+    so P(X) is unaffected by construction). Reference keeps its natural
+    ClaimNb composition untouched; current is resampled (real rows only, no
+    replacement/duplication) to shift P(ClaimNb) towards
+    ``settings.target_claim_rate``, holding P(X | has_claim) exactly fixed
+    since every retained row is reused unperturbed -- only the relative
+    count of claim vs. no-claim rows changes. See
+    datafiles/french-motor-paper.pdf Table 1 for the natural ~5.02% claim
+    rate this shifts away from (default target: 15%).
+
+    measure_columns/file_name mirror DataMotor; unlike DataMotor, ClaimNb is
+    kept (it's the label here, not a leakage risk) and Region is dropped
+    (no group-based split is used for this construction).
+    """
+
+    file_name = "freMTPL2freq.csv"
+    measure_columns = [
+        "Area",
+        "VehPower",
+        "VehAge",
+        "DrivAge",
+        "BonusMalus",
+        "VehBrand",
+        "VehGas",
+        "Density",
+    ]
+    target = "ClaimNb"
+
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+        if not 0 < self.target_claim_rate < 1:
+            raise ValueError("target_claim_rate must be in (0, 1)")
+
+    def preprocess_time(self) -> pd.Series:
+        """No genuine time axis; a random split stands in for the split key."""
+        return pd.Series(pd.NaT, index=self.df.index)
+
+    def filter_data(self) -> None:
+        """Drop rows with missing values in the tested columns (no date range to apply)."""
+        cols = self.measure_columns + [self.target]
+        self.df = self.df[~self.df[cols].isna().any(axis=1)]
+
+    def split_data(self) -> Data:
+        """Random drift-free base split, then resample current's ClaimNb rate."""
+        reference, candidate_pool = _random_half_split(self.df, self.seed)
+        testing = _resample_to_rate(
+            candidate_pool, candidate_pool[self.target] > 0, self.target_claim_rate, self.seed
+        )
+        columns = self.measure_columns + [self.target, "time"]
+        return Data(
+            features=self.measure_columns,
+            reference=reference[columns],
+            testing=testing[columns],
+            drift_type="prior",
+            target=self.target,
         )
