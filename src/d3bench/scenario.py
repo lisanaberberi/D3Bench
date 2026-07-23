@@ -28,7 +28,12 @@ from d3bench.datasets import Options as DatasetOptions
 from d3bench.results import Results
 from d3bench.tools import Options as ToolOptions
 from d3bench.tools import Tool
-from d3bench.utils import Data
+from d3bench.utils import Data, DriftType
+
+# Datasets that configure their own reference/testing split internally (via
+# Options defaults -- seed, target_claim_rate, ...) rather than a
+# scenario-declared split_boundary/current_regions key.
+_SELF_CONFIGURING_DATASETS: frozenset[Datafile] = frozenset({"motor_prior"})
 
 # pylint: disable=too-few-public-methods
 
@@ -52,10 +57,13 @@ class DataConfig(BaseModel):
     Cross-sectional datasets with no time axis (motor) split on
     ``current_regions`` instead -- exactly one of the two must be set,
     matching whichever ground-truth split the dataset's ``Dataset`` subclass
-    implements (see ``d3bench.datasets``).
+    implements (see ``d3bench.datasets``). Self-configuring datasets (e.g.
+    motor_prior, see ``_SELF_CONFIGURING_DATASETS``) require neither -- they
+    build their own split from ``Options`` defaults instead.
     """
 
     dataset: Datafile
+    drift_type: DriftType
     path: Optional[Path] = None
     building_id: Optional[int] = None
     split_boundary: Optional[str] = Field(
@@ -68,6 +76,13 @@ class DataConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_split_is_set(self) -> "DataConfig":
+        if self.dataset in _SELF_CONFIGURING_DATASETS:
+            if self.split_boundary is not None or self.current_regions is not None:
+                raise ValueError(
+                    f"{self.dataset} self-configures its split via Options defaults; "
+                    "split_boundary/current_regions must not be set in [data]"
+                )
+            return self
         if (self.split_boundary is None) == (self.current_regions is None):
             raise ValueError(
                 "exactly one of split_boundary or current_regions must be set in [data]"
@@ -112,8 +127,11 @@ class Scenario(BaseModel):
         if self.data.split_boundary is not None:
             boundary = dt.datetime.strptime(self.data.split_boundary, _SPLIT_BOUNDARY_FORMAT).date()
             settings = DatasetOptions(boundary=boundary)
-        else:
+        elif self.data.current_regions is not None:
             settings = DatasetOptions(current_regions=self.data.current_regions)
+        else:
+            # self-configuring dataset (e.g. motor_prior): Options defaults apply.
+            settings = DatasetOptions()
         if self.data.building_id is not None:
             return dataset_cls(self.data.building_id, settings=settings, path=self.data.path)
         return dataset_cls(settings=settings, path=self.data.path)
@@ -126,5 +144,11 @@ class Scenario(BaseModel):
     def run_benchmark(self) -> Results:
         """Prepare the scenario's data/tools and run the benchmark."""
         data = self.load_dataset().split_data()
+        if data.drift_type != self.data.drift_type:
+            raise ValueError(
+                f"scenario declares drift_type={self.data.drift_type!r} but dataset "
+                f"{self.data.dataset!r} constructed drift_type={data.drift_type!r} -- "
+                "scenario file and Dataset subclass disagree"
+            )
         tool_instances = self.load_tools(data)
         return Results(tool_instances, self.run.resolved_criteria)
