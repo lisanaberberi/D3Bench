@@ -1,5 +1,6 @@
 [data]
 dataset = "energy"
+drift_type = "covariate"
 path = "datafiles/energy_data.csv"
 building_id = 1
 split_boundary = "04-01-2020 00:00"

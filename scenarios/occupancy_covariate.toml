@@ -1,5 +1,6 @@
 [data]
 dataset = "occupancy"
+drift_type = "covariate"
 path = "datafiles/occupancy_data.csv"
 split_boundary = "05-09-2021 00:00"
 

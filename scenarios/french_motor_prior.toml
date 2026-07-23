@@ -1,8 +1,7 @@
 [data]
-dataset = "motor"
-drift_type = "covariate"
+dataset = "motor_prior"
+drift_type = "prior"
 path = "datafiles/freMTPL2freq.csv"
-current_regions = ["R82", "R93"]
 
 [run]
 tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
