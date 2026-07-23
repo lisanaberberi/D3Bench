@@ -23,6 +23,7 @@ DATASET_CLASSES: dict[Datafile, Type[Dataset]] = {
     "energy": datasets.DataEnergy,
     "occupancy": datasets.DataOccupancy,
     "motor": datasets.DataMotor,
+    "motor_prior": datasets.DataMotorPrior,
 }
 
 # Initialize the datasets constant.
@@ -41,6 +42,9 @@ DATASETS: dict[Datafile, Dataset] = {
     "motor": DATASET_CLASSES["motor"](
         settings=DatasetOptions(current_regions=["R82", "R93"])
     ),
+    # motor_prior self-configures via Options defaults (seed/target_claim_rate) --
+    # no boundary/region key needed, see datasets.DataMotorPrior.
+    "motor_prior": DATASET_CLASSES["motor_prior"](),
 }
 
 # Initialize the tools constant
