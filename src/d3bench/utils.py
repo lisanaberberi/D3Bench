@@ -2,7 +2,7 @@
 
 import dataclasses as dc
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional, TypeAlias, Literal
 
 import numpy as np
 import pandas as pd
@@ -83,11 +83,21 @@ class BaseTestMethod(ABC):
         """Return the result of the test."""
 
 
+# "concept" is reserved for a future scenario (not yet implemented -- see
+# OnlineCDReport's TODO below on why it needs more than a column selection).
+DriftType: TypeAlias = Literal["covariate", "prior", "concept"]
+
+
 @dc.dataclass
 class Data:  # pylint: disable=missing-class-docstring
     features: list[str]
     reference: pd.DataFrame
     testing: pd.DataFrame
+    drift_type: DriftType
+    #: Label column name for non-covariate scenarios (e.g. DataMotorPrior's
+    #: "ClaimNb"), already present in `reference`/`testing`. None for
+    #: drift_type == "covariate".
+    target: Optional[str] = None
 
     @property
     def len_reference(self) -> int:
