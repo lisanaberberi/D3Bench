@@ -62,6 +62,19 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         # energy/occupancy) and narrow self.features to match, so per-feature
         # results (e.g. CVM online's per-feature statistic) stay aligned.
         self._numeric_idx = utils.numeric_column_indices(x_reference)
+        if not self._numeric_idx:
+            # e.g. drift_type == "prior": nothing numeric to build a
+            # kernel/threshold from. alibi_detect's own threshold
+            # calibration already fails on this (ZeroDivisionError /
+            # "quantile should not be estimated using only 0 samples", a
+            # 1/n_features division for CvM) -- raising MethodNotApplicable
+            # first gives _try_report a short, informative line instead of
+            # that library-internal traceback.
+            raise utils.MethodNotApplicable(
+                f"{self.detector_class.__name__} needs at least one numeric column to "
+                "calibrate its thresholds from, and every monitored column for this "
+                "scenario is non-numeric."
+            )
         self.features = [self.features[i] for i in self._numeric_idx]
         self.detector = self.detector_class(self._subsample(x_reference), **self.config)
 
@@ -249,6 +262,20 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         # ChiSquareTest/MixedTypeTabularData need categorical columns *kept*
         # (encoded, not dropped) and override this in BaseMixedTypeTest below.
         self._numeric_idx = utils.numeric_column_indices(x_reference)
+        if not self._numeric_idx:
+            # e.g. drift_type == "prior": nothing numeric left, so
+            # x_reference[:, []] is a degenerate 0-dim array where every row
+            # is identical -- how the underlying alibi_detect detector
+            # handles that is inconsistent across algorithms (MMD/KS/CvM
+            # silently tolerate it, producing correct-looking empty results
+            # only because self.features also became empty; LSDD's own
+            # duplicate-instance check chokes on it instead: "Too many
+            # repeat instances"). Raise MethodNotApplicable up front rather
+            # than relying on each algorithm's luck.
+            raise utils.MethodNotApplicable(
+                f"{self.detector_class.__name__} needs at least one numeric column, and "
+                "every monitored column for this scenario is non-numeric."
+            )
         self.features = [self.features[i] for i in self._numeric_idx]
         self.detector = self.detector_class(self._subsample(x_reference), **self.config)
 
