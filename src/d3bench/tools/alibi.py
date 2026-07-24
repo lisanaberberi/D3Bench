@@ -61,7 +61,9 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         # categorical columns (a no-op on all-numeric datasets like
         # energy/occupancy) and narrow self.features to match, so per-feature
         # results (e.g. CVM online's per-feature statistic) stay aligned.
-        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self._numeric_idx = utils.numeric_column_indices(
+            x_reference, self.features, self.categorical_columns
+        )
         if not self._numeric_idx:
             # e.g. drift_type == "prior": nothing numeric to build a
             # kernel/threshold from. alibi_detect's own threshold
@@ -261,7 +263,9 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
         # self.features to match, so per-feature results stay aligned.
         # ChiSquareTest/MixedTypeTabularData need categorical columns *kept*
         # (encoded, not dropped) and override this in BaseMixedTypeTest below.
-        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self._numeric_idx = utils.numeric_column_indices(
+            x_reference, self.features, self.categorical_columns
+        )
         if not self._numeric_idx:
             # e.g. drift_type == "prior": nothing numeric left, so
             # x_reference[:, []] is a degenerate 0-dim array where every row
@@ -318,8 +322,18 @@ class BaseMixedTypeTest(BaseUnivariateTest):
     def _encode(self, x: np.ndarray, fit: bool) -> np.ndarray:
         encoded = x.astype(object).copy()
         if fit:
+            # Same declared-list-then-dtype-fallback classification as the
+            # continuous-only detectors, so a declared-but-numeric-looking
+            # column (Elec2's `day`) is encoded as categorical here rather
+            # than slipping through as a continuous feature -- the explicit
+            # list, not dtype inference, decides. self.features still names
+            # every column of x at this point (fit runs _encode before any
+            # narrowing), so it aligns with numeric_column_indices' contract.
+            numeric_idx = utils.numeric_column_indices(
+                x, self.features, self.categorical_columns
+            )
             self._categorical_idx = [
-                i for i in range(x.shape[1]) if i not in utils.numeric_column_indices(x)
+                i for i in range(x.shape[1]) if i not in numeric_idx
             ]
             self._category_maps: dict[int, dict[Any, int]] = {}
         for i in self._categorical_idx:

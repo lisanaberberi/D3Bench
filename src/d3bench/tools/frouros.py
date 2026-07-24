@@ -102,7 +102,9 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # feature row (no per-feature indexing anywhere below), so dropping
         # categorical columns is safe for all of them -- a no-op on
         # all-numeric datasets like energy/occupancy.
-        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self._numeric_idx = utils.numeric_column_indices(
+            x_reference, self.features, self.categorical_columns
+        )
         if not self._numeric_idx:
             # e.g. drift_type == "prior": the only monitored column is
             # categorical. x_reference[:, []] is a valid but 0-column array,
@@ -323,7 +325,9 @@ class OnlineMaximumMeanDiscrepancy(utils.BaseTestMethod):
         # no-op on all-numeric datasets like energy/occupancy). result() only
         # reports a single scalar (no per-feature dict), so no self.features
         # bookkeeping is needed to stay aligned.
-        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self._numeric_idx = utils.numeric_column_indices(
+            x_reference, self.features, self.categorical_columns
+        )
         if not self._numeric_idx:
             # e.g. drift_type == "prior": nothing numeric to kernelize.
             # frouros's own DimensionError below already catches this, but
@@ -370,7 +374,9 @@ class IncrementalKolmogorovSmirnovTest(utils.BaseTestMethod):
         # is already built one-per-feature in __init__ (before any data is
         # seen), so categorical positions are simply left unfit/unused rather
         # than resized away.
-        self._numeric_idx = utils.numeric_column_indices(x_reference)
+        self._numeric_idx = utils.numeric_column_indices(
+            x_reference, self.features, self.categorical_columns
+        )
         for i in self._numeric_idx:
             # 1000 values otherwise "IndexError": invalid index to scalar variable.
             self.detectors[i].fit(X=x_reference[:1000, i].astype(np.float64))
@@ -486,7 +492,9 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
         if self.keep_categorical_columns:
             self._numeric_idx = list(range(x_reference.shape[1]))
         else:
-            self._numeric_idx = utils.numeric_column_indices(x_reference)
+            self._numeric_idx = utils.numeric_column_indices(
+                x_reference, self.features, self.categorical_columns
+            )
         x_reference = self._subsample(x_reference)
         for i in self._numeric_idx:
             self.detectors[i].fit(X=self._column(x_reference, i))
