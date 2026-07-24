@@ -3,13 +3,11 @@ This module contains the configuration of the datasets and tools used in the
 benchmarking process.
 """
 
-import datetime as dt
 from typing import Type
 
 from d3bench import datasets, tools
 from d3bench.config import Criteria, Datafile, Framework
 from d3bench.datasets import Dataset
-from d3bench.datasets import Options as DatasetOptions
 from d3bench.results import Results
 from d3bench.tools import Tool
 
@@ -24,27 +22,7 @@ DATASET_CLASSES: dict[Datafile, Type[Dataset]] = {
     "occupancy": datasets.DataOccupancy,
     "motor": datasets.DataMotor,
     "motor_prior": datasets.DataMotorPrior,
-}
-
-# Initialize the datasets constant.
-# occupancy's own date range (2021-03-30 -- 2021-07-11) falls entirely
-# before Options' default boundary (2022-01-01), which would otherwise
-# leave the testing split empty; use the boundary reported in the paper
-# (9 May 2021) instead.
-# motor has no time axis at all -- it group-splits on Region instead of a
-# boundary date (see datasets.DataMotor); R82/R93 (~24% of policies) are held
-# out as the "current" (new-geography) set, the rest as "reference".
-DATASETS: dict[Datafile, Dataset] = {
-    "energy": DATASET_CLASSES["energy"](building_id=1),
-    "occupancy": DATASET_CLASSES["occupancy"](
-        settings=DatasetOptions(boundary=dt.date(2021, 5, 9))
-    ),
-    "motor": DATASET_CLASSES["motor"](
-        settings=DatasetOptions(current_regions=["R82", "R93"])
-    ),
-    # motor_prior self-configures via Options defaults (seed/target_claim_rate) --
-    # no boundary/region key needed, see datasets.DataMotorPrior.
-    "motor_prior": DATASET_CLASSES["motor_prior"](),
+    "elec2": datasets.DataElec2,
 }
 
 # Initialize the tools constant
@@ -56,3 +34,34 @@ TOOLS: dict[Framework, Type[Tool]] = {
     "River": tools.River,
     "Menelaus": tools.Menelaus,
 }
+
+# Canonical scenario TOML per datafile -- the single source of truth for each
+# dataset's split boundary/current_regions/building_id (see scenarios/*.toml).
+# The plain `--datafile` CLI path (no --scenario) below builds DATASETS from
+# these instead of duplicating the same split values as Python literals,
+# which had drifted out of sync with the scenario files (e.g. "energy" here
+# used to default to Options' boundary (2022-01-01) while
+# scenarios/energy_covariate.toml has always split on 2020-04-01).
+_CANONICAL_SCENARIOS: dict[Datafile, str] = {
+    "energy": "scenarios/energy_covariate.toml",
+    "occupancy": "scenarios/occupancy_covariate.toml",
+    "motor": "scenarios/french_motor_covariate.toml",
+    "motor_prior": "scenarios/french_motor_prior.toml",
+    "elec2": "scenarios/elec2_concept.toml",
+}
+
+
+def _load_datasets() -> dict[Datafile, Dataset]:
+    """Instantiate DATASETS from each dataset's canonical scenario TOML.
+
+    Local import: d3bench.scenario itself does `from d3bench import
+    DATASET_CLASSES, TOOLS`, so importing it at module scope (before those
+    two names exist) would deadlock this circular import.
+    """
+    from d3bench.scenario import Scenario  # pylint: disable=import-outside-toplevel
+
+    return {name: Scenario.from_toml(path).load_dataset() for name, path in _CANONICAL_SCENARIOS.items()}
+
+
+# Initialize the datasets constant (plain-CLI path with fixed defaults).
+DATASETS: dict[Datafile, Dataset] = _load_datasets()
