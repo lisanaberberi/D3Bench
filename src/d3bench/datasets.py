@@ -73,6 +73,12 @@ class Dataset(ABC):
 
     file_name: str
     measure_columns: list[str]
+    #: Columns among measure_columns/target to treat as categorical regardless
+    #: of storage dtype -- forwarded to Data.categorical_columns by split_data()
+    #: and read by the continuous-only adapters. Empty on datasets whose
+    #: categorical columns are genuinely non-numeric (French Motor) or absent
+    #: (energy/occupancy); overridden only by DataElec2 (see there).
+    categorical_columns: list[str] = []
 
     def __init__(self, settings: Optional[Options] = None, path: Optional[Union[str, Path]] = None):
         settings = settings or Options()
@@ -106,6 +112,7 @@ class Dataset(ABC):
             reference=self.df[train_filter],
             testing=self.df[~train_filter],
             drift_type="covariate",
+            categorical_columns=self.categorical_columns,
         )
 
 
@@ -221,6 +228,7 @@ class DataMotor(Dataset):
             reference=self.df.loc[~current_filter, columns],
             testing=self.df.loc[current_filter, columns],
             drift_type="covariate",
+            categorical_columns=self.categorical_columns,
         )
 
 
@@ -328,6 +336,7 @@ class DataMotorPrior(Dataset):
             testing=testing,
             drift_type="prior",
             target=self.target,
+            categorical_columns=self.categorical_columns,
         )
 
 
@@ -378,6 +387,12 @@ class DataElec2(Dataset):
         "transfer",
     ]
     target = "class"
+    #: Both are ARFF nominal attributes: `class` is UP/DOWN (genuinely
+    #: non-numeric, so every adapter would classify it categorical anyway),
+    #: but `day` is {1..7} decoded to digit-strings that cast cleanly to float
+    #: -- declaring it here is what makes Frouros/Alibi drop it too, so they
+    #: norm over the same 6 continuous columns River's preprocess keeps.
+    categorical_columns = ["day", "class"]
     train_fraction = 0.7
 
     def preprocess_time(self) -> pd.Series:
@@ -400,4 +415,5 @@ class DataElec2(Dataset):
             testing=self.df.iloc[split_idx:][columns].copy(),
             drift_type="concept",
             target=self.target,
+            categorical_columns=self.categorical_columns,
         )

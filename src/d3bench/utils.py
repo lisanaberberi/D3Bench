@@ -26,15 +26,33 @@ def _is_numeric_column(column: np.ndarray) -> bool:
         return False
 
 
-def numeric_column_indices(x: np.ndarray) -> list[int]:
+def numeric_column_indices(
+    x: np.ndarray, features: list[str], categorical_columns: list[str]
+) -> list[int]:
     """Positions of x's (object-dtype, shape [n, n_features]) numeric-valued columns.
 
     Shared by tool adapters (alibi.py, frouros.py, ...) whose methods are
     continuous-only and need to drop categorical columns from a mixed-dtype
     dataset (e.g. French Motor Claims) -- a no-op (returns every index) on
     all-numeric datasets like energy/occupancy.
+
+    ``features`` names x's columns in order (``features[i]`` is column ``i``);
+    ``categorical_columns`` (from ``Data.categorical_columns``) is the explicit,
+    declared categorical set. A declared column is excluded *by name* before its
+    dtype is ever inspected -- this is the only mechanism that catches Elec2's
+    ``day`` (an ARFF nominal {1..7} decoded to digit-strings like "2", which
+    ``astype(np.float64)`` happily accepts, so the dtype probe alone would keep
+    it and disagree with the other adapters). The dtype probe stays as a
+    *fallback* for every undeclared column, so datasets that never declare a
+    categorical set (energy/occupancy: all-numeric; French Motor: real string
+    columns that already fail the float cast) are entirely unaffected.
     """
-    return [i for i in range(x.shape[1]) if _is_numeric_column(x[:, i])]
+    declared = set(categorical_columns)
+    return [
+        i
+        for i in range(x.shape[1])
+        if features[i] not in declared and _is_numeric_column(x[:, i])
+    ]
 
 
 class BaseArguments(BaseSettings):
@@ -75,6 +93,13 @@ class MethodNotApplicable(Exception):
 class BaseTestMethod(ABC):
     """Base class for the test methods."""
 
+    #: Declared categorical columns (from Data.categorical_columns), set by
+    #: Job on the instance after construction (benchmarks.Job.__init__). Empty
+    #: by default so an adapter that reads it before Job wires it -- or a tool
+    #: whose data declares none -- falls back to pure dtype inference.
+    #: numeric_column_indices consumes this to exclude e.g. Elec2's `day`.
+    categorical_columns: list[str] = []
+
     @abstractmethod
     def __init__(self, features: list[str]) -> None:
         """Initialize the test method."""
@@ -114,6 +139,17 @@ class Data:  # pylint: disable=missing-class-docstring
     #: "ClaimNb"), already present in `reference`/`testing`. None for
     #: drift_type == "covariate".
     target: Optional[str] = None
+    #: Columns to treat as categorical regardless of how they happen to be
+    #: stored -- this OVERRIDES storage dtype. Motivating case: Elec2's `day`
+    #: is an ARFF nominal attribute {1..7} that _read_dataset_file decodes to
+    #: digit-strings ("2", ...), which cast cleanly to float, so a
+    #: dtype/value probe would wrongly keep it as a continuous feature. Naming
+    #: it here is the single source of truth that makes every continuous-only
+    #: adapter (Frouros/Alibi via numeric_column_indices, River via
+    #: preprocess) drop the *same* columns. Empty for datasets whose
+    #: categorical columns are genuinely non-numeric (French Motor's VehBrand/
+    #: VehGas) or that have none at all (energy/occupancy).
+    categorical_columns: list[str] = dc.field(default_factory=list)
 
     @property
     def len_reference(self) -> int:
