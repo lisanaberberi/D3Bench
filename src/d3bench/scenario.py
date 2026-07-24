@@ -22,7 +22,7 @@ from typing import Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 from d3bench import DATASET_CLASSES, TOOLS
-from d3bench.config import Criteria, Datafile, Framework
+from d3bench.config import DEFAULT_FAMILIES, Criteria, Datafile, Framework, MethodFamily
 from d3bench.datasets import Dataset
 from d3bench.datasets import Options as DatasetOptions
 from d3bench.results import Results
@@ -98,6 +98,15 @@ class RunConfig(BaseModel):
     criteria: list[str]
     show_report: bool = True
     vm: bool = False
+    method_families: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Override config.DEFAULT_FAMILIES[data.drift_type] -- which of each "
+            'tool\'s online_cd/online_dd/batch_cd/batch_dd method dicts run, e.g. '
+            '["online_cd", "batch_cd"]. Rarely needed: the drift_type default '
+            "already picks the right families for covariate/prior/concept."
+        ),
+    )
 
     @property
     def resolved_criteria(self) -> set[Criteria]:
@@ -142,6 +151,15 @@ class Scenario(BaseModel):
         settings = ToolOptions(on_vm=self.run.vm)
         return [TOOLS[name](data, settings=settings) for name in self.run.tools]
 
+    @property
+    def resolved_families(self) -> frozenset[MethodFamily]:
+        """Which method families (see config.MethodFamily) to run: [run]
+        .method_families if the scenario overrides it, else
+        config.DEFAULT_FAMILIES[data.drift_type]."""
+        if self.run.method_families is not None:
+            return frozenset(name.lower() for name in self.run.method_families)
+        return DEFAULT_FAMILIES[self.data.drift_type]
+
     def run_benchmark(self) -> Results:
         """Prepare the scenario's data/tools and run the benchmark."""
         data = self.load_dataset().split_data()
@@ -152,4 +170,4 @@ class Scenario(BaseModel):
                 "scenario file and Dataset subclass disagree"
             )
         tool_instances = self.load_tools(data)
-        return Results(tool_instances, self.run.resolved_criteria)
+        return Results(tool_instances, self.run.resolved_criteria, self.resolved_families)

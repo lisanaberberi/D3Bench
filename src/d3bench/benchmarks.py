@@ -13,7 +13,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 from d3bench import reports
-from d3bench.config import Criteria, Method
+from d3bench.config import Criteria, Method, MethodFamily
 from d3bench.reports import Report, TestInformation
 from d3bench.tools import Tool
 from d3bench.utils import BaseTestMethod, Data, MethodNotApplicable
@@ -197,20 +197,37 @@ def _try_report(method: Method, test: Test, tool: Tool, criteria: set[Criteria])
         return None
 
 
-def get_reports(tool: Tool, criteria: set[Criteria]) -> Generator[Report, None, None]:
-    """Return the drift detection values."""
-    for method, test in tool.online_cd_methods.items():
-        if report := _try_report(method, test, tool, criteria):
-            yield report
-    for method, test in tool.online_dd_methods.items():
-        if report := _try_report(method, test, tool, criteria):
-            yield report
-    for method, test in tool.batch_cd_methods.items():
-        if report := _try_report(method, test, tool, criteria):
-            yield report
-    for method, test in tool.batch_dd_methods.items():
-        if report := _try_report(method, test, tool, criteria):
-            yield report
+# Fixed iteration order, matching the sequence the four method dicts used to
+# run in unconditionally (see git history) -- covariate/prior resolve to
+# every family (config.DEFAULT_FAMILIES), so get_reports must still visit
+# them in this exact order for those scenarios' JSON output to stay
+# byte-identical; sorting `families` alphabetically instead would silently
+# reorder every existing scenario's results (batch_* before online_*).
+_FAMILY_ORDER: tuple[MethodFamily, ...] = ("online_cd", "online_dd", "batch_cd", "batch_dd")
+
+
+def get_reports(
+    tool: Tool, criteria: set[Criteria], families: frozenset[MethodFamily]
+) -> Generator[Report, None, None]:
+    """Return the drift detection values for methods in the given families.
+
+    ``families`` is the scenario's resolved_families (see d3bench.scenario
+    and config.DEFAULT_FAMILIES) -- restricts which of tool's four method
+    dicts get run, so e.g. a concept-drift scenario isn't answered by a
+    tool's covariate-only (batch_dd) methods.
+    """
+    for family in _FAMILY_ORDER:
+        if family not in families:
+            continue
+        family_methods = tool.methods_by_family[family]
+        if not family_methods:
+            logger.warning(
+                "%s: no %s methods -- contributes nothing to this scenario", tool.name, family
+            )
+            continue
+        for method, test in family_methods.items():
+            if report := _try_report(method, test, tool, criteria):
+                yield report
 
 
 class Job:

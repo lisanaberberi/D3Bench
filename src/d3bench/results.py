@@ -10,7 +10,7 @@ from typing import Generator
 from pydantic.json import pydantic_encoder
 
 from d3bench.benchmarks import get_reports
-from d3bench.config import Criteria, Framework, results_path
+from d3bench.config import Criteria, Framework, MethodFamily, results_path
 from d3bench.reports import Report
 from d3bench.tools import Tool
 
@@ -18,12 +18,13 @@ from d3bench.tools import Tool
 class Results(Mapping):
     """Data class to store the results of the benchmark."""
 
-    def __init__(self, tools: list[Tool], criteria: set[Criteria]):
+    def __init__(self, tools: list[Tool], criteria: set[Criteria], families: frozenset[MethodFamily]):
         self.tools = {tool.name: tool for tool in tools}
         self.criteria = criteria
+        self.families = families
 
     def __getitem__(self, index: Framework) -> list[Report]:
-        generator = get_reports(tool=self.tools[index], criteria=self.criteria)
+        generator = get_reports(tool=self.tools[index], criteria=self.criteria, families=self.families)
         return list(generator)
 
     def __len__(self) -> int:

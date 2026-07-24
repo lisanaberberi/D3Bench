@@ -19,7 +19,7 @@ import d3bench.tools.menelaus as tools_menelaus
 import d3bench.tools.nannyml as tools_nannyml
 import d3bench.tools.river as tools_river
 from d3bench import methods
-from d3bench.config import Framework
+from d3bench.config import Framework, MethodFamily
 from d3bench.utils import Data, MethodNotApplicable
 
 # pylint: disable=too-few-public-methods
@@ -80,6 +80,19 @@ class Tool(ABC):
             assert self.data.target is not None
             return [self.data.target]
         return self.data.features
+
+    @property
+    def methods_by_family(self) -> dict[MethodFamily, dict[Any, Any]]:
+        """This tool's four method dicts, keyed by the same names as
+        config.MethodFamily/DEFAULT_FAMILIES -- lets get_reports() iterate
+        just the families a scenario's drift_type resolves to instead of
+        every one of Tool's four hardcoded attributes unconditionally."""
+        return {
+            "online_cd": self.online_cd_methods,
+            "online_dd": self.online_dd_methods,
+            "batch_cd": self.batch_cd_methods,
+            "batch_dd": self.batch_dd_methods,
+        }
 
     def usable_features(self, test: type) -> list[str]:
         """Return the subset of ``data.features`` a given method will see.

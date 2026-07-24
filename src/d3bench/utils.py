@@ -92,8 +92,15 @@ class BaseTestMethod(ABC):
         """Return the result of the test."""
 
 
-# "concept" is reserved for a future scenario (not yet implemented -- see
-# OnlineCDReport's TODO below on why it needs more than a column selection).
+# "concept" ships as scenarios/elec2_concept.toml. Unlike "prior" (which
+# narrows Tool._monitored_columns to a single label column), "concept"
+# selects *method families* instead -- see config.DEFAULT_FAMILIES and
+# Scenario.resolved_families -- since there's no single "the concept-drift
+# column" to narrow to; a concept scenario is answered by online_cd/batch_cd
+# methods across every monitored column. OnlineCDReport's TODO below still
+# stands: ground-truth-drift-point metrics (detection delay, false alarm
+# rate, ...) aren't implemented, since Data/Dataset carries no drift-point
+# label -- only which methods run is drift_type-aware so far.
 DriftType: TypeAlias = Literal["covariate", "prior", "concept"]
 
 

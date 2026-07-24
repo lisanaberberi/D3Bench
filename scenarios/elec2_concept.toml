@@ -4,6 +4,11 @@ drift_type = "concept"
 path = "datafiles/elecNormNew.arff"
 
 [run]
-tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
+# Evidently/NannyML declare empty online_cd_methods/batch_cd_methods (see
+# d3bench.tools) -- they'd contribute nothing to a concept scenario now that
+# drift_type resolves the method families (config.DEFAULT_FAMILIES), so
+# they're dropped here rather than left in to log a "contributes nothing"
+# warning on every run.
+tools = ["Alibi-Detect", "Frouros", "River"]
 criteria = ["FUNCTIONAL", "STATISTICS", "RUNTIME", "CPU_RUNTIME", "MEMORY"]
 vm = false
