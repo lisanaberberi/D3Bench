@@ -236,6 +236,12 @@ class Job:
     def __init__(self, benchmark: BaseBenchmark) -> None:
         self.benchmark = benchmark
         self.detector = benchmark.test(benchmark.tool.usable_features(benchmark.test))
+        # Hand the detector the scenario's declared categorical set so its
+        # fit() can call utils.numeric_column_indices with an explicit list
+        # rather than inferring purely from dtype (which disagrees with the
+        # other adapters on e.g. Elec2's digit-string `day`). Empty for every
+        # dataset that declares none, so this is inert there.
+        self.detector.categorical_columns = benchmark.tool.data.categorical_columns
 
     def fit(self) -> None:
         """Run the benchmark with the given parameters."""

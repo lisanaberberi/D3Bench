@@ -20,7 +20,7 @@ import d3bench.tools.nannyml as tools_nannyml
 import d3bench.tools.river as tools_river
 from d3bench import methods
 from d3bench.config import Framework, MethodFamily
-from d3bench.utils import Data, MethodNotApplicable
+from d3bench.utils import Data, MethodNotApplicable, numeric_column_indices
 
 # pylint: disable=too-few-public-methods
 # pylint: disable=line-too-long
@@ -232,7 +232,20 @@ class Evidently(Tool):
         (e.g. DataMotorPrior's target is stored as explicit "claim"/
         "no_claim" labels, not relabeled-but-still-numeric values, so this
         needs no drift_type-specific override -- every tool that inspects
-        this column, by whatever mechanism it uses, agrees it's categorical)."""
+        this column, by whatever mechanism it uses, agrees it's categorical).
+
+        NOTE: this is a SEPARATE categorical-membership mechanism from the one
+        the continuous-only adapters (Frouros/Alibi/River) use. They route on
+        the explicit Data.categorical_columns list (via
+        utils.numeric_column_indices); Evidently instead routes on pandas
+        dtype (select_dtypes) here and in preprocess() below. There are thus
+        two sources of truth. They agree for every current dataset -- Elec2's
+        `day`, the one column where dtype and the explicit list would diverge,
+        is object dtype here so select_dtypes already treats it categorical,
+        matching the explicit list -- so this is left as-is rather than
+        rewired. A future dataset that stored a declared-categorical column in
+        a numeric dtype would split the two mechanisms; that is when this
+        should switch to Data.categorical_columns too."""
         numeric = set(self.data.reference.select_dtypes(include="number").columns)
         wants_categorical = getattr(test, "categorical", False)
         return [
@@ -248,6 +261,12 @@ class Evidently(Tool):
         # numerical. Kept in sync with usable_features(), which Job uses to
         # build each method's per-feature detectors before preprocess runs;
         # a method never gets a Report for a column outside its own kind.
+        #
+        # Like usable_features() above, this classifies by pandas dtype
+        # (select_dtypes), a DIFFERENT mechanism from Data.categorical_columns
+        # that the continuous-only adapters use -- see the note in
+        # usable_features() for why the two agree on every current dataset and
+        # when that would stop being true.
         numerical = list(df.select_dtypes(include="number").columns)
         categorical = [c for c in df.columns if c not in numerical]
         schema = EDataDefinition(numerical_columns=numerical, categorical_columns=categorical)
@@ -362,12 +381,29 @@ class River(Tool):
         # column is non-numeric (verified: even int columns turn into '1'),
         # which is silent on all-numeric datasets (energy/occupancy, where
         # this is a no-op) but corrupts np.linalg.norm on mixed data (motor).
-        numeric_df = df.select_dtypes(include="number")
-        dropped = set(df.columns) - set(numeric_df.columns)
+        #
+        # Classify columns the SAME way Frouros/Alibi do -- via the shared
+        # numeric_column_indices (declared Data.categorical_columns dropped by
+        # name, undeclared columns probed by float-cast as a fallback) instead
+        # of select_dtypes. select_dtypes routed purely on pandas dtype, which
+        # disagreed with Frouros's value-cast probe on Elec2's digit-string
+        # `day` (object dtype here, so select_dtypes dropped it, but a
+        # float-castable "2" that Frouros kept) -- the two tools then normed
+        # over different feature sets. Going through the same helper makes them
+        # build the vector from the identical columns.
+        columns = list(df.columns)
+        x = np.array([df[c].to_numpy() for c in columns], dtype=object).T
+        numeric_idx = numeric_column_indices(x, columns, self.data.categorical_columns)
+        numeric_cols = [columns[i] for i in numeric_idx]
+        numeric_df = df[numeric_cols]
+        dropped = set(columns) - set(numeric_cols)
         if dropped:
             logger.info(
-                "River: dropping non-numeric columns %s from the concept-drift feature vector",
+                "River: dropping non-numeric columns %s from the concept-drift feature vector "
+                "-- monitoring %d numeric column(s): %s",
                 sorted(dropped),
+                len(numeric_cols),
+                numeric_cols,
             )
         if numeric_df.empty:
             # e.g. drift_type == "prior": the only monitored column is
