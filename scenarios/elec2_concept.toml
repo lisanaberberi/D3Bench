@@ -1,0 +1,9 @@
+[data]
+dataset = "elec2"
+drift_type = "concept"
+path = "datafiles/elecNormNew.arff"
+
+[run]
+tools = ["Evidently", "NannyML", "Alibi-Detect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "STATISTICS", "RUNTIME", "CPU_RUNTIME", "MEMORY"]
+vm = false
