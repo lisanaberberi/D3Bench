@@ -69,16 +69,28 @@ class Tool(ABC):
     @property
     def _monitored_columns(self) -> list[str]:
         """Columns preprocess()/usable_features() operate on: the X features
-        for covariate scenarios, or just the label column for prior-drift
-        scenarios (data.target). Centralized here rather than in each
-        adapter's preprocess() -- Frouros/River/Alibi-Detect stack every
-        column physically present in the frame they're handed regardless of
+        for covariate scenarios, just the label column for prior-drift
+        scenarios (data.target), or covariates *and* label for concept-drift
+        scenarios. Centralized here rather than in each adapter's
+        preprocess() -- Frouros/River/Alibi-Detect stack every column
+        physically present in the frame they're handed regardless of
         data.features, so routing the column selection once here (used by
         both usable_features() and reference_data/testing_data below) keeps
-        every adapter correctly scoped with no per-adapter changes."""
+        every adapter correctly scoped with no per-adapter changes.
+
+        "concept" differs from "prior" in what question is being asked, not
+        just which columns are included: prior drift narrows to the label
+        alone because it is testing P(y) directly, whereas concept drift
+        monitors covariates and label together because it is nominally
+        about P(y|X) -- covariates and label answer different halves of
+        that question, and Data.target (rather than a hardcoded "class"-like
+        name) is what lets a report tell the two apart downstream."""
         if self.data.drift_type == "prior":
             assert self.data.target is not None
             return [self.data.target]
+        if self.data.drift_type == "concept":
+            assert self.data.target is not None
+            return self.data.features + [self.data.target]
         return self.data.features
 
     @property
