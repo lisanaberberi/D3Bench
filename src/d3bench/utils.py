@@ -63,6 +63,15 @@ class BaseArguments(BaseSettings):
         )
 
 
+class MethodNotApplicable(Exception):
+    """A method/tool combination that cannot run on the current scenario's
+    monitored columns (e.g. a continuous-only method with nothing numeric
+    left to monitor, such as a "prior"-drift scenario whose only monitored
+    column is categorical). Raised by tool adapters so ``_try_report`` can
+    log one short line instead of a full traceback or library-internal
+    error."""
+
+
 class BaseTestMethod(ABC):
     """Base class for the test methods."""
 

@@ -31,9 +31,10 @@ from d3bench.tools import Tool
 from d3bench.utils import Data, DriftType
 
 # Datasets that configure their own reference/testing split internally (via
-# Options defaults -- seed, target_claim_rate, ...) rather than a
+# Options defaults -- seed, target_claim_rate, ... -- or, for elec2, a fixed
+# chronological split baked into DataElec2 itself) rather than a
 # scenario-declared split_boundary/current_regions key.
-_SELF_CONFIGURING_DATASETS: frozenset[Datafile] = frozenset({"motor_prior"})
+_SELF_CONFIGURING_DATASETS: frozenset[Datafile] = frozenset({"motor_prior", "elec2"})
 
 # pylint: disable=too-few-public-methods
 

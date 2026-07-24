@@ -41,6 +41,7 @@ Datafile: TypeAlias = Literal[
     "occupancy",
     "motor",
     "motor_prior",
+    "elec2",
 ]
 
 

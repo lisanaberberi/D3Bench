@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from scipy.io import arff as scipy_arff
 
 from d3bench import config
 from d3bench.utils import Data
@@ -50,6 +51,23 @@ class Options(BaseSettings):
     )
 
 
+def _read_dataset_file(path: Union[str, Path]) -> pd.DataFrame:
+    """Load a dataset file into a DataFrame, dispatching on suffix.
+
+    Every dataset but DataElec2 is a plain CSV; DataElec2's elecNormNew.arff
+    needs scipy's ARFF reader instead, plus decoding its nominal attributes
+    (day, class) from bytes to str -- loadarff returns those as bytes.
+    """
+    path = Path(path)
+    if path.suffix == ".arff":
+        raw, _meta = scipy_arff.loadarff(path)
+        df = pd.DataFrame(raw)
+        for column in df.select_dtypes(include="object"):
+            df[column] = df[column].str.decode("utf-8")
+        return df
+    return pd.read_csv(path, low_memory=False)
+
+
 class Dataset(ABC):
     """Abstract class for the datasets."""
 
@@ -58,7 +76,7 @@ class Dataset(ABC):
 
     def __init__(self, settings: Optional[Options] = None, path: Optional[Union[str, Path]] = None):
         settings = settings or Options()
-        self.df: pd.DataFrame = pd.read_csv(path or config.data_path / self.file_name, low_memory=False)
+        self.df: pd.DataFrame = _read_dataset_file(path or config.data_path / self.file_name)
         self.df["time"] = self.preprocess_time()
         self.data_start = settings.data_start
         self.data_end = settings.data_end
@@ -310,4 +328,62 @@ class DataMotorPrior(Dataset):
             testing=testing,
             drift_type="prior",
             target=self.target,
+        )
+
+
+class DataElec2(Dataset):
+    """Concept-drift construction on the Elec2 dataset (NSW electricity market,
+    datafiles/elecNormNew.arff -- the classic Harries/"elecNormNew" release
+    used throughout the concept-drift literature).
+
+    Like DataMotor's Region split and DataMotorPrior's random half-split,
+    there is no real time axis to boundary-split on: ``date``/``period`` are
+    already min-max normalized to [0, 1] rather than real timestamps, so
+    Options.boundary (a calendar date) cannot apply here either. Unlike
+    those two, the file's row order *is* chronological, so this scenario
+    self-configures (see d3bench.scenario._SELF_CONFIGURING_DATASETS) on a
+    fixed first-70%/last-30% split by row order -- the standard train/test
+    split used for this dataset in the concept-drift benchmark literature.
+
+    measure_columns monitors every remaining attribute, including the label
+    ``class`` (UP/DOWN, whether the NSW price moved up relative to a moving
+    average) -- "concept" drift_type has no tool-side special-casing yet
+    (unlike "prior", see Tool._monitored_columns), so there is no covariate
+    vs. label distinction to make here; every column is just monitored
+    generically like a covariate scenario. ``date`` itself is dropped from
+    measure_columns since it is only the chronological ordering key used to
+    build the split, not a feature to test for drift.
+    """
+
+    file_name = "elecNormNew.arff"
+    measure_columns = [
+        "day",
+        "period",
+        "nswprice",
+        "nswdemand",
+        "vicprice",
+        "vicdemand",
+        "transfer",
+        "class",
+    ]
+    train_fraction = 0.7
+
+    def preprocess_time(self) -> pd.Series:
+        """No genuine timestamps; row order (already chronological) stands in."""
+        return pd.Series(pd.NaT, index=self.df.index)
+
+    def filter_data(self) -> None:
+        """Drop rows with missing values in the tested columns (no date range to apply)."""
+        nan_rows = self.df[self.measure_columns].isna()
+        self.df = self.df[~nan_rows.any(axis=1)]
+
+    def split_data(self) -> Data:
+        """First train_fraction of rows (chronological order) as reference, rest as testing."""
+        split_idx = int(len(self.df) * self.train_fraction)
+        columns = self.measure_columns + ["time"]
+        return Data(
+            features=self.measure_columns,
+            reference=self.df.iloc[:split_idx][columns].copy(),
+            testing=self.df.iloc[split_idx:][columns].copy(),
+            drift_type="concept",
         )
