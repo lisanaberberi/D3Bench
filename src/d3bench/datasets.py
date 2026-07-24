@@ -344,15 +344,27 @@ class DataElec2(Dataset):
     self-configures (see d3bench.scenario._SELF_CONFIGURING_DATASETS) on a
     fixed first-70%/last-30% split by row order -- the standard train/test
     split used for this dataset in the concept-drift benchmark literature.
+    The split stays chronological (not random) on purpose: Elec2's actual
+    concept drift is a real regime change partway through the series (the
+    NSW-Victoria interconnect altering the price/demand relationship), and a
+    random split would spread that shift evenly across both halves, erasing
+    the drift the sequence-sensitive online detectors are meant to catch.
 
-    measure_columns monitors every remaining attribute, including the label
     ``class`` (UP/DOWN, whether the NSW price moved up relative to a moving
-    average) -- "concept" drift_type has no tool-side special-casing yet
-    (unlike "prior", see Tool._monitored_columns), so there is no covariate
-    vs. label distinction to make here; every column is just monitored
-    generically like a covariate scenario. ``date`` itself is dropped from
-    measure_columns since it is only the chronological ordering key used to
-    build the split, not a feature to test for drift.
+    average) is the label, so it is excluded from measure_columns and
+    exposed as ``target`` instead (mirroring DataMotorPrior) -- this lets
+    "concept" drift_type be told apart from "covariate" via Data.target the
+    same way "prior" already is (see Tool._monitored_columns). Note what
+    this does and does not fix: it identifies the label, and
+    Tool._monitored_columns now includes it for concept scenarios, but no
+    detector yet consumes it as a label -- the online CD detectors
+    (Frouros/River/Alibi-Detect) still reduce every monitored column
+    (covariates and label alike) to a covariate-style stream (e.g. a
+    feature-vector norm) rather than tracking a model's prediction error
+    over time. Wiring up genuine P(y|X)-style supervised monitoring is a
+    separate follow-up. ``date`` itself is dropped from measure_columns
+    since it is only the chronological ordering key used to build the
+    split, not a feature to test for drift.
     """
 
     file_name = "elecNormNew.arff"
@@ -364,8 +376,8 @@ class DataElec2(Dataset):
         "vicprice",
         "vicdemand",
         "transfer",
-        "class",
     ]
+    target = "class"
     train_fraction = 0.7
 
     def preprocess_time(self) -> pd.Series:
@@ -374,16 +386,18 @@ class DataElec2(Dataset):
 
     def filter_data(self) -> None:
         """Drop rows with missing values in the tested columns (no date range to apply)."""
-        nan_rows = self.df[self.measure_columns].isna()
+        cols = self.measure_columns + [self.target]
+        nan_rows = self.df[cols].isna()
         self.df = self.df[~nan_rows.any(axis=1)]
 
     def split_data(self) -> Data:
         """First train_fraction of rows (chronological order) as reference, rest as testing."""
         split_idx = int(len(self.df) * self.train_fraction)
-        columns = self.measure_columns + ["time"]
+        columns = self.measure_columns + [self.target, "time"]
         return Data(
             features=self.measure_columns,
             reference=self.df.iloc[:split_idx][columns].copy(),
             testing=self.df.iloc[split_idx:][columns].copy(),
             drift_type="concept",
+            target=self.target,
         )
