@@ -4,7 +4,6 @@ import logging
 import time
 import timeit
 from abc import ABC, abstractmethod
-from copy import copy
 from functools import cached_property
 from typing import Any, Generator, Optional, Type, TypeAlias, Union
 
@@ -30,8 +29,6 @@ class BaseBenchmark(ABC):
         self.method = method
         self.test = test
         self.tool = tool
-        self.job = Job(benchmark=self)
-        self._prepare_job()
 
     @property
     def data(self) -> Data:
@@ -48,12 +45,28 @@ class BaseBenchmark(ABC):
         """Return whether the benchmark was run on a VM."""
         return self.tool.settings.on_vm
 
-    def _prepare_job(self) -> None:
-        """Fit the job for the benchmark."""
+    def _fitted_job(self) -> "Job":
+        """Build and fit a fresh detector.
+
+        Each benchmark criterion (runtime, cputime, memory, results) calls this
+        for its own independent detector, so no state leaks from one criterion's
+        streaming into another's. Online-CD detectors accumulate state and their
+        status["drift"]/drift_detected latches; previously all criteria shared
+        one detector (constructed once and shallow-copied), so results depended
+        on whether the timing passes had run first -- drift_index in particular
+        collapsed to 0 once a timing pass had already latched the verdict.
+        """
+        job = Job(benchmark=self)
         try:
-            self.job.fit()
+            job.fit()
         except NotImplementedError:
+            # Some tools (notably Evidently) do the whole reference-vs-current
+            # comparison in test() and expose no fit step -- tolerate that and
+            # let test() run, exactly as the old construction-time _prepare_job
+            # did. A method that also has no working test() then fails in
+            # test() and is skipped by _try_report, as before.
             logger.debug("No train method for %s", self.method)
+        return job
 
     @abstractmethod
     def get_results(self) -> dict[str, Any]:
@@ -130,27 +143,18 @@ class Benchmark(BaseBenchmark):
 
     @cached_property
     def _results(self) -> dict[str, Any]:
-        """Run the detector's test pass once and cache it.
+        """Fit a fresh detector, run one test pass, and cache the result.
 
         functional, statistic and drift_index are all read from this single
-        pass. Previously each getter called get_results() separately, and each
-        call re-ran test() on the *shared* detector (Job.copy is shallow, so
-        the underlying detector object is aliased) -- a stateful online-CD
-        detector therefore saw a different accumulated state per getter. That
-        is harmless for the latching drift bool and for the (None) online-CD
-        statistic, but it made drift_index depend on which getter ran first.
-        One cached pass removes that inconsistency without changing any
-        existing value (batch detectors are idempotent; online statistic stays
-        None), so functional and drift_index now always describe the same run.
+        cached pass, on a detector that no other criterion has streamed -- so
+        the three always describe the same clean run and drift_index no longer
+        depends on whether a timing pass latched the verdict first (see
+        _fitted_job). Caching also keeps the three getters from each re-running
+        test().
         """
-        # Copy the job to avoid modifying the original job
-        _job = self.job.copy()
-
-        # Run the drift detection for the data
-        _job.test()
-
-        # Return the drift statistics
-        return _job.results
+        job = self._fitted_job()
+        job.test()
+        return job.results
 
     def get_results(self) -> dict[str, Any]:
         """Return the drift statistics of the job (single cached test pass)."""
@@ -163,9 +167,10 @@ class Benchmark(BaseBenchmark):
         Includes waiting time for resources.
         """
 
-        # Create a runtime timer
+        # Fresh detector for this criterion (see _fitted_job).
         # TODO: Future implementation for time training phase
-        timer = timeit.Timer(self.job.test, timer=time.time)
+        job = self._fitted_job()
+        timer = timeit.Timer(job.test, timer=time.time)
 
         # Time runtimes measurements
         times = timer.repeat(self.repetitions, number=1)
@@ -178,9 +183,10 @@ class Benchmark(BaseBenchmark):
         (exclude: waiting time for resources): time in ms
         """
 
-        # Create a runtime timer
+        # Fresh detector for this criterion (see _fitted_job).
         # TODO: Future implementation for time training phase
-        timer = timeit.Timer(self.job.test, timer=time.process_time)
+        job = self._fitted_job()
+        timer = timeit.Timer(job.test, timer=time.process_time)
 
         # Time runtimes measurements
         times = timer.repeat(self.repetitions, number=1)
@@ -192,10 +198,11 @@ class Benchmark(BaseBenchmark):
         Measures RAM resources consumed by the process (user and system)
         """
 
-        # Run the drift detection for each building
+        # Fresh detector for this criterion (see _fitted_job).
         # TODO: Future implementation for time training phase
+        job = self._fitted_job()
         repeat = range(self.repetitions)
-        rmem = [memory_usage(self.job.test) for _ in repeat]
+        rmem = [memory_usage(job.test) for _ in repeat]
 
         # Memory in run as the maximum memory used during the run
         mems = [max(mem) for mem in rmem]
@@ -289,9 +296,3 @@ class Job:
     def results(self) -> dict[str, Any]:
         """Return the results of the benchmark."""
         return self.detector.result()
-
-    def copy(self) -> "Job":
-        """Return a copy of the job."""
-        job = copy(self)
-        job.detector = copy(self.detector)
-        return job

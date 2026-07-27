@@ -17,12 +17,20 @@ canonical Frouros Elec2/DDM example -- because its job is only to *produce a
 comparable error stream*, not to be a competitive model; a shared, boring
 spec keeps the benchmark measuring detectors, not models.
 
-Reference-side errors come from ``cross_val_predict`` (out-of-fold), not from
-predicting the very rows the model was fit on: in-sample training error is
-optimistically low, so an in-sample reference baseline followed by
-generalization-level testing error would make every detector fire on the
-train/test gap alone rather than on real drift. Out-of-fold reference errors
-put both splits in the same regime.
+The detectors consume ``testing`` only: each self-calibrates its baseline
+error rate on the first ``min_num_instances``/``warm_start`` of the test
+stream and then detects, exactly as the canonical Frouros Elec2/DDM example
+streams the test set alone. They are deliberately NOT warmed up on the
+reference error stream -- fed tens of thousands of reference instances, a
+Bernoulli error stream's ordinary fluctuation trips DDM/CUSUM/... and latches
+the verdict before any test data, a warm-up artifact (see the fit() notes in
+tools/frouros.py and tools/river.py).
+
+``reference`` is still computed and exposed as a diagnostic baseline: the
+model's out-of-fold (``cross_val_predict``) error rate on the reference split,
+in the same generalization regime as ``testing`` (in-sample training error
+would be optimistically low). Nothing consumes it for detection today; it is
+retained so a reference-vs-test error-rate comparison is available.
 """
 
 import dataclasses as dc
@@ -49,10 +57,11 @@ _CV_FOLDS = 5
 class ErrorStream:
     """A shared classifier's 0/1 misclassification stream for both splits.
 
-    ``reference`` is out-of-fold (see module docstring); ``testing`` comes from
-    the model refit on the full reference split. Both are int arrays (1 =
-    misclassified), the signal every error-stream concept-drift detector
-    consumes -- warm up on ``reference``, then detect on ``testing``.
+    ``testing`` (model refit on the full reference split, scored on testing) is
+    the signal every error-stream concept-drift detector consumes -- they
+    self-calibrate on its leading window, then detect. ``reference`` is the
+    out-of-fold baseline error rate (diagnostic only; not fed to detectors, see
+    module docstring). Both are int arrays (1 = misclassified).
     """
 
     reference: np.ndarray

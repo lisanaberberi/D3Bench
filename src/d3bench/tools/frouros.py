@@ -100,13 +100,17 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # Skip detectors whose applicability doesn't match the (present/absent)
         # error stream -- e.g. KSWIN under a supervised run.
         self._guard_error_stream()
-        # Supervised concept-drift path (drift_type == "concept"): warm the
-        # detector up on the shared classifier's out-of-fold reference error
-        # stream (see d3bench.supervised) instead of a feature-vector norm, so
-        # it is genuinely tracking P(y|X).
+        # Supervised concept-drift path (drift_type == "concept"): the shared
+        # classifier is already trained (d3bench.supervised), so fit has nothing
+        # to do here -- the detector self-calibrates its baseline error rate on
+        # the first `min_num_instances` of the TEST error stream (see test()),
+        # exactly as Frouros's canonical Elec2/DDM example streams only the test
+        # set. Deliberately NO warm-up on the reference error stream: fed tens
+        # of thousands of reference instances, a ~25%-error Bernoulli stream's
+        # ordinary fluctuation trips DDM/CUSUM/ADWIN/STEPD and latches
+        # status["drift"] BEFORE any test data -- a warm-up artifact that pinned
+        # the verdict True and drift_index at 0.
         if self.error_stream is not None:
-            for error in self.error_stream.reference:
-                self.detector.update(value=float(error))
             return
         # Unsupervised feature-norm path (covariate/prior). Detector is trained
         # one by one on the reference data. See:

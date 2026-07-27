@@ -39,12 +39,13 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
         # error stream: KSWIN under a supervised run, or the binary
         # DDM/EDDM/HDDM (error_stream_only) under an unsupervised one.
         self._guard_error_stream()
-        # Supervised concept-drift path (drift_type == "concept"): warm up on
-        # the shared classifier's out-of-fold reference error stream (see
-        # d3bench.supervised) instead of a feature-vector norm.
+        # Supervised concept-drift path (drift_type == "concept"): the shared
+        # classifier is already trained (d3bench.supervised); the detector
+        # self-calibrates on the TEST error stream (see test()). No warm-up on
+        # the reference error stream -- see the note in frouros.py
+        # BaseOnlineCD.fit (avoids latching the verdict on reference-stream
+        # fluctuation before any test data is seen).
         if self.error_stream is not None:
-            for error in self.error_stream.reference:
-                self.detector.update(float(error))
             return
         # Unsupervised feature-norm path (covariate/prior). Detector is trained
         # one by one on the reference data. See:
