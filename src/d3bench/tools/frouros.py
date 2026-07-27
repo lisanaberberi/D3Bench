@@ -93,8 +93,18 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def fit(self, x_reference: np.ndarray) -> None:
-        # Detector is trained one by one on the reference data
-        # See:
+        # Supervised concept-drift path (drift_type == "concept"): warm the
+        # detector up on the shared classifier's out-of-fold reference error
+        # stream (see d3bench.supervised) instead of a feature-vector norm, so
+        # it is genuinely tracking P(y|X). X-distribution-only detectors (KSWIN)
+        # are rejected here rather than fed a 0/1 stream they can't use.
+        if self.error_stream is not None:
+            self._reject_if_x_distribution_only()
+            for error in self.error_stream.reference:
+                self.detector.update(value=float(error))
+            return
+        # Unsupervised feature-norm path (covariate/prior). Detector is trained
+        # one by one on the reference data. See:
         # https://frouros.readthedocs.io/en/latest/examples/concept_drift/DDM_advance.html#warm-up-phase
         # !!! only 1000 instances are used for training, very high time consumption
         #
@@ -127,6 +137,13 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
             self.detector.update(value=x)
 
     def test(self, x_test: np.ndarray) -> None:
+        # Supervised concept-drift path: stream the shared classifier's testing
+        # error over time (see fit above); status["drift"] latches on the first
+        # detection, which result() reports.
+        if self.error_stream is not None:
+            for error in self.error_stream.testing:
+                self.detector.update(value=float(error))
+            return
         # Only one feature is accepted
         x_test = x_test[:, self._numeric_idx].astype(np.float64)
         # Each row is fed through a pure-Python per-instance update() loop with
@@ -281,6 +298,11 @@ class AdaptiveWindowing(BaseOnlineCD):
 class KolmogorovSmirnovWindowing(BaseOnlineCD):
     """Kolmogorov-Smirnov Windowing detector."""
 
+    # KSWIN's test is a two-sample KS between windows of the monitored *values*
+    # -- an assumption about the distribution of X, not classifier performance,
+    # and degenerate on a two-valued 0/1 error stream. Excluded from the
+    # supervised concept-drift run (see BaseTestMethod.error_stream_capable).
+    error_stream_capable = False
     detector_class = concept_drift.KSWIN
     config = concept_drift.KSWINConfig(
         alpha=1e-4,  # significance level

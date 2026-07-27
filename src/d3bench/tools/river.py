@@ -31,8 +31,17 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def fit(self, x_reference: np.ndarray) -> None:
-        # Detector is trained one by one on the reference data
-        # See:
+        # Supervised concept-drift path (drift_type == "concept"): warm up on
+        # the shared classifier's out-of-fold reference error stream (see
+        # d3bench.supervised) instead of a feature-vector norm. X-distribution
+        # detectors (KSWIN) are rejected rather than fed a 0/1 stream.
+        if self.error_stream is not None:
+            self._reject_if_x_distribution_only()
+            for error in self.error_stream.reference:
+                self.detector.update(float(error))
+            return
+        # Unsupervised feature-norm path (covariate/prior). Detector is trained
+        # one by one on the reference data. See:
         # https://frouros.readthedocs.io/en/latest/examples/concept_drift/DDM_advance.html#warm-up-phase
         # !!! only 1000 instances are used for training, very high time consumption
         for x in np.linalg.norm(x_reference[:1000], ord=2, axis=1):
@@ -40,6 +49,13 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
 
     def test(self, x_test: np.ndarray) -> None:
         self.drift_ever = False
+        # Supervised concept-drift path: stream the classifier's testing error.
+        if self.error_stream is not None:
+            for error in self.error_stream.testing:
+                self.detector.update(float(error))
+                if self.detector.drift_detected:
+                    self.drift_ever = True
+            return
         for x in np.linalg.norm(x_test, ord=2, axis=1):
             self.detector.update(x)
             if self.detector.drift_detected:
@@ -112,6 +128,11 @@ class HoeffdingDriftDetectionMethodTestW(BaseOnlineTest):
 class OnlineKolmogorovSmirnov(BaseOnlineTest):
     """Online Kolmogorov-Smirnov"""
 
+    # KS-windowing over the monitored values -- an assumption about the
+    # distribution of X, degenerate on a two-valued 0/1 error stream. Excluded
+    # from the supervised concept-drift run; inherited fit() raises
+    # MethodNotApplicable before the overridden test() below is reached.
+    error_stream_capable = False
     detector_class = drift.KSWIN
     config = {
         "alpha": 0.005,

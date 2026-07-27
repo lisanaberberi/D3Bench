@@ -100,6 +100,34 @@ class BaseTestMethod(ABC):
     #: numeric_column_indices consumes this to exclude e.g. Elec2's `day`.
     categorical_columns: list[str] = []
 
+    #: Set by Job (benchmarks.Job.__init__) only for a concept-drift scenario:
+    #: the shared supervised classifier's 0/1 error stream (see
+    #: d3bench.supervised.ErrorStream). None for covariate/prior, which is the
+    #: signal every online-CD adapter uses to stay on its existing
+    #: unsupervised feature-norm path rather than the supervised one.
+    error_stream: Optional[Any] = None
+
+    #: Whether this detector consumes a *classifier error stream* (DDM, EDDM,
+    #: HDDM, CUSUM, Page-Hinkley, ADWIN, ...). False for detectors whose
+    #: statistical assumptions are about the distribution of X, not classifier
+    #: performance (KS-windowing, kernel two-sample tests): those cannot
+    #: meaningfully consume a 0/1 error stream and are skipped
+    #: (MethodNotApplicable) in a supervised concept-drift run -- see
+    #: _reject_if_x_distribution_only.
+    error_stream_capable: bool = True
+
+    def _reject_if_x_distribution_only(self) -> None:
+        """Skip an X-distribution detector when a supervised concept-drift run
+        selected it -- raise MethodNotApplicable so _try_report logs one short
+        line instead of the detector producing a meaningless result from a 0/1
+        error stream it was never designed for."""
+        if self.error_stream is not None and not self.error_stream_capable:
+            raise MethodNotApplicable(
+                f"{type(self).__name__} tests the distribution of X, not classifier "
+                "error, so it is excluded from the supervised concept-drift run "
+                "(it cannot meaningfully consume a 0/1 error stream)."
+            )
+
     @abstractmethod
     def __init__(self, features: list[str]) -> None:
         """Initialize the test method."""

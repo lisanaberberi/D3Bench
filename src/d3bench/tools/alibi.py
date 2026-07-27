@@ -31,6 +31,13 @@ def _statistic_value(data: dict[str, Any]) -> Optional[Any]:
 class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     """Base class for online univariate drift detectors."""
 
+    # Every detector here (online MMD/LSDD/CvM) is an unsupervised two-sample
+    # test on the distribution of X, not a classifier-error monitor -- it needs
+    # the multivariate feature window, not a 1D 0/1 error stream. Excluded from
+    # the supervised concept-drift run (see BaseTestMethod.error_stream_capable);
+    # fit() below rejects it up front.
+    error_stream_capable = False
+
     def __init__(self, features: list[str]) -> None:
         self.features = features
         self.detector: Any
@@ -57,6 +64,9 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # Supervised concept-drift runs select this detector only to reject it:
+        # it tests the distribution of X, not classifier error.
+        self._reject_if_x_distribution_only()
         # MMD/LSDD/CvM are continuous-only kernel/distance methods -- drop
         # categorical columns (a no-op on all-numeric datasets like
         # energy/occupancy) and narrow self.features to match, so per-feature

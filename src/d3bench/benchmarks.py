@@ -12,7 +12,7 @@ from memory_profiler import memory_usage
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from d3bench import reports
+from d3bench import reports, supervised
 from d3bench.config import Criteria, Method, MethodFamily
 from d3bench.reports import Report, TestInformation
 from d3bench.tools import Tool
@@ -242,6 +242,16 @@ class Job:
         # other adapters on e.g. Elec2's digit-string `day`). Empty for every
         # dataset that declares none, so this is inert there.
         self.detector.categorical_columns = benchmark.tool.data.categorical_columns
+        # For a concept-drift scenario, hand the detector the shared supervised
+        # classifier's 0/1 error stream (see d3bench.supervised). Its presence
+        # is what switches the online-CD adapters from their unsupervised
+        # feature-norm path onto genuine P(y|X) error-stream monitoring; None
+        # for covariate/prior leaves that path untouched. Only online_cd
+        # methods run for "concept" (config.DEFAULT_FAMILIES), so no batch/
+        # data-drift adapter ever reads this.
+        data = benchmark.tool.data
+        if data.drift_type == "concept":
+            self.detector.error_stream = supervised.error_stream(data)
 
     def fit(self) -> None:
         """Run the benchmark with the given parameters."""
