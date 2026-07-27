@@ -31,12 +31,14 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # Skip detectors whose applicability doesn't match the (present/absent)
+        # error stream: KSWIN under a supervised run, or the binary
+        # DDM/EDDM/HDDM (error_stream_only) under an unsupervised one.
+        self._guard_error_stream()
         # Supervised concept-drift path (drift_type == "concept"): warm up on
         # the shared classifier's out-of-fold reference error stream (see
-        # d3bench.supervised) instead of a feature-vector norm. X-distribution
-        # detectors (KSWIN) are rejected rather than fed a 0/1 stream.
+        # d3bench.supervised) instead of a feature-vector norm.
         if self.error_stream is not None:
-            self._reject_if_x_distribution_only()
             for error in self.error_stream.reference:
                 self.detector.update(float(error))
             return
@@ -83,6 +85,9 @@ class AdaptiveWindowing(BaseOnlineTest):
 class DriftDetectionMethod(BaseOnlineTest):
     """Drift Detection Method"""
 
+    # Binary error-stream detector: 1 = misclassification. No unsupervised
+    # feature-norm fallback (raises "math domain error" on unbounded input).
+    error_stream_only = True
     detector_class = drift.binary.DDM
     config = {
         "warm_start": 30,
@@ -94,6 +99,8 @@ class DriftDetectionMethod(BaseOnlineTest):
 class EarlyDriftDetectionMethod(BaseOnlineTest):
     """Early Drift Detection Method"""
 
+    # Binary error-stream detector: 1 = misclassification. See DriftDetectionMethod.
+    error_stream_only = True
     detector_class = drift.binary.EDDM
     config = {
         "warm_start": 30,
@@ -105,6 +112,8 @@ class EarlyDriftDetectionMethod(BaseOnlineTest):
 class HoeffdingDriftDetectionMethodTestA(BaseOnlineTest):
     """Hoeffding Drift Detection Method Test A"""
 
+    # Binary error-stream detector: 1 = misclassification. See DriftDetectionMethod.
+    error_stream_only = True
     detector_class = drift.binary.HDDM_A
     config = {
         "drift_confidence": 0.001,
@@ -116,6 +125,8 @@ class HoeffdingDriftDetectionMethodTestA(BaseOnlineTest):
 class HoeffdingDriftDetectionMethodTestW(BaseOnlineTest):
     """Hoeffding Drift Detection Method Test W"""
 
+    # Binary error-stream detector: 1 = misclassification. See DriftDetectionMethod.
+    error_stream_only = True
     detector_class = drift.binary.HDDM_W
     config = {
         "drift_confidence": 0.001,
