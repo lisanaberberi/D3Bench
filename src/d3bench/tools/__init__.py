@@ -360,10 +360,18 @@ class River(Tool):
     name: Framework = "River"
     online_cd_methods: dict[methods.OnlineCD, Any] = {
         methods.OnlineCD.ADAPTIVE_WINDOWING: tools_river.AdaptiveWindowing,
-        # methods.OnlineCD.DRIFT_DETECTION_METHOD: tools_river.DriftDetectionMethod,  TODO: ValueError: math domain error
-        # methods.OnlineCD.EARLY_DRIFT_DETECTION_METHOD: tools_river.EarlyDriftDetectionMethod,
-        # methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_A: tools_river.HoeffdingDriftDetectionMethodTestA,
-        # methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_W: tools_river.HoeffdingDriftDetectionMethodTestW,  TODO: river.drift.binary.HDDM_W expects a bounded 0/1 correctness stream; fed the L2-norm of raw covariate features (unbounded), it hangs rather than converging -- effectively never returns on Energy/Occupancy-sized data.
+        # river.drift.binary DDM/EDDM/HDDM expect a bounded 0/1 correctness
+        # stream. Fed the L2-norm of raw covariate features (unbounded) they
+        # raise "math domain error" / hang -- which is why they were disabled.
+        # They now run only in a supervised concept-drift scenario, where the
+        # shared classifier supplies exactly that 0/1 error stream (see
+        # d3bench.supervised); each is flagged error_stream_only (river.py), so
+        # in an unsupervised covariate/prior run they're skipped
+        # (MethodNotApplicable) rather than crashing.
+        methods.OnlineCD.DRIFT_DETECTION_METHOD: tools_river.DriftDetectionMethod,
+        methods.OnlineCD.EARLY_DRIFT_DETECTION_METHOD: tools_river.EarlyDriftDetectionMethod,
+        methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_A: tools_river.HoeffdingDriftDetectionMethodTestA,
+        methods.OnlineCD.HOEFFDING_DRIFT_DETECTION_METHOD_TEST_W: tools_river.HoeffdingDriftDetectionMethodTestW,
         methods.OnlineCD.ONLINE_KOLMOGOROV_SMIRNOV: tools_river.OnlineKolmogorovSmirnov,
         methods.OnlineCD.PAGE_HINKLEY_TEST: tools_river.PageHinkleyTest,
         methods.OnlineCD.PERIODIC_TRIGGER: tools_river.PeriodicTrigger,
@@ -397,9 +405,18 @@ class River(Tool):
         numeric_cols = [columns[i] for i in numeric_idx]
         numeric_df = df[numeric_cols]
         dropped = set(columns) - set(numeric_cols)
-        if dropped:
+        # Only announce the dropped-column feature vector when it is actually
+        # the detector input. Under a concept scenario the online-CD detectors
+        # consume the shared classifier's 0/1 error stream instead and return
+        # from test() before ever reading this numeric frame (see river.py and
+        # d3bench.supervised) -- so the log would advertise a feature vector no
+        # detector uses. The error stream is attached (per detector, by
+        # benchmarks.Job) exactly when drift_type == "concept", and preprocess
+        # only sees self.data, so that is the reliable proxy here -- there is no
+        # data.error_stream attribute to test.
+        if dropped and self.data.drift_type != "concept":
             logger.info(
-                "River: dropping non-numeric columns %s from the concept-drift feature vector "
+                "River: dropping non-numeric columns %s from the feature vector "
                 "-- monitoring %d numeric column(s): %s",
                 sorted(dropped),
                 len(numeric_cols),

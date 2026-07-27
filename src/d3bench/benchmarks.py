@@ -96,6 +96,14 @@ class BaseBenchmark(ABC):
         threshold to reach the functional verdict (see Report.statistic)."""
         return self._broadcast(self.get_results().get("statistic"), float)
 
+    def get_drift_index(self) -> Optional[int]:
+        """Return the testing-stream offset at which drift first fired, for the
+        streaming online-CD detectors that record it (see river.py/frouros.py
+        result()); None otherwise. A single scalar, deliberately NOT broadcast
+        per column (unlike drift/statistic) and NOT folded into `statistic`."""
+        index = self.get_results().get("drift_index")
+        return int(index) if index is not None else None
+
     def report(self, criteria: set[Criteria]) -> Report:
         """Return the drift detection values."""
         return reports.Report(
@@ -104,6 +112,7 @@ class BaseBenchmark(ABC):
             memory=self.get_memories() if "memory" in criteria else None,
             functional=self.get_functional() if "functional" in criteria else None,
             statistic=self.get_statistic() if "functional" in criteria else None,
+            drift_index=self.get_drift_index() if "functional" in criteria else None,
             test_information=TestInformation(
                 framework=self.tool.name,
                 run_on_vm=self.run_on_vm,
@@ -119,12 +128,21 @@ class BaseBenchmark(ABC):
 class Benchmark(BaseBenchmark):
     """Class to run a benchmark to obtain Results."""
 
-    def get_results(self) -> dict[str, Any]:
-        """
-        Return the drift statistics of the job.
-        Run the drift detection for the data.
-        """
+    @cached_property
+    def _results(self) -> dict[str, Any]:
+        """Run the detector's test pass once and cache it.
 
+        functional, statistic and drift_index are all read from this single
+        pass. Previously each getter called get_results() separately, and each
+        call re-ran test() on the *shared* detector (Job.copy is shallow, so
+        the underlying detector object is aliased) -- a stateful online-CD
+        detector therefore saw a different accumulated state per getter. That
+        is harmless for the latching drift bool and for the (None) online-CD
+        statistic, but it made drift_index depend on which getter ran first.
+        One cached pass removes that inconsistency without changing any
+        existing value (batch detectors are idempotent; online statistic stays
+        None), so functional and drift_index now always describe the same run.
+        """
         # Copy the job to avoid modifying the original job
         _job = self.job.copy()
 
@@ -133,6 +151,10 @@ class Benchmark(BaseBenchmark):
 
         # Return the drift statistics
         return _job.results
+
+    def get_results(self) -> dict[str, Any]:
+        """Return the drift statistics of the job (single cached test pass)."""
+        return self._results
 
     def get_runtimes(self) -> reports.Stats:
         """

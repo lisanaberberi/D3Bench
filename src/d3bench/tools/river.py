@@ -1,6 +1,6 @@
 """Module for River Detect detectors."""
 
-from typing import Any
+from typing import Any, Optional
 
 from abc import ABC, abstractmethod
 import numpy as np
@@ -19,6 +19,10 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
         self.features = features
         self.detector = self.detector_class(**self.config)
         self.drift: Any
+        # Stream index at which drift first fired (set in test()); None until
+        # then. drift_detected is transient per update, so result() would
+        # otherwise only recover *that* drift fired, not *when*.
+        self.drift_index: Optional[int] = None
 
     @property
     @abstractmethod
@@ -51,23 +55,31 @@ class BaseOnlineTest(utils.BaseTestMethod, ABC):
 
     def test(self, x_test: np.ndarray) -> None:
         self.drift_ever = False
+        # Reset before each stream so drift_index is the first-firing offset
+        # *within this test pass*, not a stale value from an earlier one.
+        self.drift_index = None
         # Supervised concept-drift path: stream the classifier's testing error.
         if self.error_stream is not None:
-            for error in self.error_stream.testing:
+            for i, error in enumerate(self.error_stream.testing):
                 self.detector.update(float(error))
                 if self.detector.drift_detected:
                     self.drift_ever = True
+                    if self.drift_index is None:
+                        self.drift_index = i
             return
-        for x in np.linalg.norm(x_test, ord=2, axis=1):
+        for i, x in enumerate(np.linalg.norm(x_test, ord=2, axis=1)):
             self.detector.update(x)
             if self.detector.drift_detected:
                 self.drift_ever = True
+                if self.drift_index is None:
+                    self.drift_index = i
 
     def result(self) -> dict[str, Any]:
         # No uniform test statistic across river's online CD algorithms
-        # (ADWIN, PageHinkley track different private state); report only the
-        # verdict. KSWIN overrides with its KS statistic.
-        return {"drift": self.drift_ever}
+        # (ADWIN, PageHinkley track different private state); report the verdict
+        # plus drift_index, the stream offset it first fired at (see test()).
+        # KSWIN overrides with its KS statistic.
+        return {"drift": self.drift_ever, "drift_index": self.drift_index}
 
 class AdaptiveWindowing(BaseOnlineTest):
     """Online Maximum Mean Discrepancy"""
@@ -155,18 +167,21 @@ class OnlineKolmogorovSmirnov(BaseOnlineTest):
 
     def test(self, x_test: np.ndarray) -> None:
         self.drift_ever = False
+        self.drift_index = None
         self.drift_p_value = None
-        for x in np.linalg.norm(x_test, ord=2, axis=1):
+        for i, x in enumerate(np.linalg.norm(x_test, ord=2, axis=1)):
             self.detector.update(x)
             if self.detector.drift_detected:
                 self.drift_ever = True
+                if self.drift_index is None:            # first firing only
+                    self.drift_index = i
                 if self.drift_p_value is None:          # first firing only
                     self.drift_p_value = self.detector.p_value
 
     def result(self) -> dict[str, Any]:
         # KSWIN's KS p-value captured at the moment drift first fired -- not the
         # stream-end window, which resets after each firing.
-        result = {"drift": self.drift_ever}
+        result: dict[str, Any] = {"drift": self.drift_ever, "drift_index": self.drift_index}
         if self.drift_p_value is not None:
             result["statistic"] = self.drift_p_value
         return result

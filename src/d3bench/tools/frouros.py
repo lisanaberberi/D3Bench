@@ -81,6 +81,10 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         self.detector = self.detector_class(self.config)
         self.features = features
         self.drift: bool
+        # Stream index at which drift first fired (set in test()); None until
+        # then. status["drift"] latches, so this is the only way result() can
+        # recover *when* it fired rather than just that it did.
+        self.drift_index: Optional[int] = None
 
     @property
     @abstractmethod
@@ -93,13 +97,14 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         """Property that returns the detector class."""
 
     def fit(self, x_reference: np.ndarray) -> None:
+        # Skip detectors whose applicability doesn't match the (present/absent)
+        # error stream -- e.g. KSWIN under a supervised run.
+        self._guard_error_stream()
         # Supervised concept-drift path (drift_type == "concept"): warm the
         # detector up on the shared classifier's out-of-fold reference error
         # stream (see d3bench.supervised) instead of a feature-vector norm, so
-        # it is genuinely tracking P(y|X). X-distribution-only detectors (KSWIN)
-        # are rejected here rather than fed a 0/1 stream they can't use.
+        # it is genuinely tracking P(y|X).
         if self.error_stream is not None:
-            self._reject_if_x_distribution_only()
             for error in self.error_stream.reference:
                 self.detector.update(value=float(error))
             return
@@ -137,12 +142,17 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
             self.detector.update(value=x)
 
     def test(self, x_test: np.ndarray) -> None:
+        # Reset before each stream so drift_index is the first-firing offset
+        # *within this test pass*, not a stale value from an earlier one.
+        self.drift_index = None
         # Supervised concept-drift path: stream the shared classifier's testing
         # error over time (see fit above); status["drift"] latches on the first
         # detection, which result() reports.
         if self.error_stream is not None:
-            for error in self.error_stream.testing:
+            for i, error in enumerate(self.error_stream.testing):
                 self.detector.update(value=float(error))
+                if self.drift_index is None and self.detector.status["drift"]:
+                    self.drift_index = i
             return
         # Only one feature is accepted
         x_test = x_test[:, self._numeric_idx].astype(np.float64)
@@ -153,15 +163,18 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # Motor's ~164k-row testing split. Capped the same way as the batch
         # detectors' _subsample, and just as much of a no-op there.
         x_test = _subsample_rows(x_test, _MAX_SAMPLES)
-        for x in np.linalg.norm(x_test, ord=2, axis=1):
+        for i, x in enumerate(np.linalg.norm(x_test, ord=2, axis=1)):
             self.detector.update(value=x)
+            if self.drift_index is None and self.detector.status["drift"]:
+                self.drift_index = i
 
     def result(self) -> dict[str, Any]:
         # Online CD detectors expose no uniform test statistic across algorithms,
         # and status["drift"] latches -- a firing count is just "instances after
         # first detection", a transition count is always 0/1 (duplicates drift).
-        # No comparable D-value exists; report only the verdict.
-        return {"drift": self.detector.status["drift"]}
+        # No comparable D-value exists; report the verdict plus drift_index, the
+        # stream offset at which it first fired (see test()).
+        return {"drift": self.detector.status["drift"], "drift_index": self.drift_index}
 
 
 class BayesianOnlineChangeDetection(BaseOnlineCD):

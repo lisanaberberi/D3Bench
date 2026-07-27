@@ -88,6 +88,17 @@ class Report(BaseModel):
             "column in the benchmark paper's tables."
         ),
     )
+    drift_index: Optional[int] = Field(
+        None,
+        description=(
+            "For streaming online-CD detectors only: the 0-based offset in the testing "
+            "stream at which drift FIRST fired. The verdict latches (status['drift'] / "
+            "drift_detected), so this is what tells a real detection apart from one that "
+            "only fired deep into the stream -- a distinct scalar, deliberately NOT "
+            "per-column and NOT folded into `statistic`. None for batch/data-drift "
+            "methods (no per-instance stream) or when the detector never fired."
+        ),
+    )
 
 
 class OnlineCDReport(Report):

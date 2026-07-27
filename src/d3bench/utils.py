@@ -113,19 +113,38 @@ class BaseTestMethod(ABC):
     #: performance (KS-windowing, kernel two-sample tests): those cannot
     #: meaningfully consume a 0/1 error stream and are skipped
     #: (MethodNotApplicable) in a supervised concept-drift run -- see
-    #: _reject_if_x_distribution_only.
+    #: _guard_error_stream.
     error_stream_capable: bool = True
 
-    def _reject_if_x_distribution_only(self) -> None:
-        """Skip an X-distribution detector when a supervised concept-drift run
-        selected it -- raise MethodNotApplicable so _try_report logs one short
-        line instead of the detector producing a meaningless result from a 0/1
-        error stream it was never designed for."""
+    #: The opposite constraint: True for detectors that ONLY work on a 0/1
+    #: classifier-error stream and have no unsupervised feature-stream fallback
+    #: (River's binary DDM/EDDM/HDDM, which either raise "math domain error" or
+    #: hang when fed the unbounded feature-norm). They run in a supervised
+    #: concept-drift scenario and are skipped (MethodNotApplicable), not
+    #: crashed, in an unsupervised covariate/prior run -- see _guard_error_stream.
+    error_stream_only: bool = False
+
+    def _guard_error_stream(self) -> None:
+        """Reconcile this detector with the (present or absent) supervised error
+        stream, raising MethodNotApplicable -- so _try_report logs one short
+        line instead of a meaningless result or a crash -- when they don't match:
+
+        * an X-distribution-only detector (error_stream_capable=False) selected
+          by a supervised concept-drift run, or
+        * an error-stream-only detector (error_stream_only=True) selected by an
+          unsupervised covariate/prior run, where no error stream exists.
+        """
         if self.error_stream is not None and not self.error_stream_capable:
             raise MethodNotApplicable(
                 f"{type(self).__name__} tests the distribution of X, not classifier "
                 "error, so it is excluded from the supervised concept-drift run "
                 "(it cannot meaningfully consume a 0/1 error stream)."
+            )
+        if self.error_stream is None and self.error_stream_only:
+            raise MethodNotApplicable(
+                f"{type(self).__name__} monitors a classifier's 0/1 error stream and is "
+                "only meaningful in a supervised concept-drift scenario; there is no "
+                "such stream in an unsupervised covariate/prior run."
             )
 
     @abstractmethod

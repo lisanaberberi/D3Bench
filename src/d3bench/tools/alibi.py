@@ -66,7 +66,7 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
     def fit(self, x_reference: np.ndarray) -> None:
         # Supervised concept-drift runs select this detector only to reject it:
         # it tests the distribution of X, not classifier error.
-        self._reject_if_x_distribution_only()
+        self._guard_error_stream()
         # MMD/LSDD/CvM are continuous-only kernel/distance methods -- drop
         # categorical columns (a no-op on all-numeric datasets like
         # energy/occupancy) and narrow self.features to match, so per-feature
