@@ -19,10 +19,17 @@ import tomllib
 from pathlib import Path
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from d3bench import DATASET_CLASSES, TOOLS
-from d3bench.config import DEFAULT_FAMILIES, Criteria, Datafile, Framework, MethodFamily
+from d3bench.config import (
+    DEFAULT_FAMILIES,
+    Criteria,
+    Datafile,
+    Framework,
+    MethodFamily,
+    resolve_project_path,
+)
 from d3bench.datasets import Dataset
 from d3bench.datasets import Options as DatasetOptions
 from d3bench.results import Results
@@ -34,7 +41,7 @@ from d3bench.utils import Data, DriftType
 # Options defaults -- seed, target_claim_rate, ... -- or, for elec2, a fixed
 # chronological split baked into DataElec2 itself) rather than a
 # scenario-declared split_boundary/current_regions key.
-_SELF_CONFIGURING_DATASETS: frozenset[Datafile] = frozenset({"motor_prior", "elec2"})
+_SELF_CONFIGURING_DATASETS: frozenset[Datafile] = frozenset({"motor_prior", "elec2", "elec2_injected"})
 
 # pylint: disable=too-few-public-methods
 
@@ -74,6 +81,14 @@ class DataConfig(BaseModel):
         default=None,
         description='Ground-truth group split for cross-sectional datasets, e.g. ["R82", "R93"].',
     )
+
+    @field_validator("path")
+    @classmethod
+    def _anchor_path(cls, value: Optional[Path]) -> Optional[Path]:
+        """A scenario's ``path`` is written project-root-relative (e.g.
+        ``datafiles/elecNormNew.arff``), so resolve it like ``config
+        .data_path`` does rather than against the process cwd."""
+        return value if value is None else resolve_project_path(value)
 
     @model_validator(mode="after")
     def _check_split_is_set(self) -> "DataConfig":
@@ -127,8 +142,13 @@ class Scenario(BaseModel):
 
     @classmethod
     def from_toml(cls, path: Union[str, Path]) -> "Scenario":
-        """Parse a scenario definition from a TOML file."""
-        with open(path, "rb") as toml_file:
+        """Parse a scenario definition from a TOML file.
+
+        A relative ``path`` is read from the cwd if it exists there and from
+        the project root otherwise, so ``"scenarios/elec2_concept.toml"``
+        works from a notebook in ``scripts/`` as well as from the root.
+        """
+        with open(resolve_project_path(path), "rb") as toml_file:
             return cls.model_validate(tomllib.load(toml_file))
 
     def load_dataset(self) -> Dataset:

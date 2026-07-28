@@ -197,6 +197,15 @@ class Data:  # pylint: disable=missing-class-docstring
     #: categorical columns are genuinely non-numeric (French Motor's VehBrand/
     #: VehGas) or that have none at all (energy/occupancy).
     categorical_columns: list[str] = dc.field(default_factory=list)
+    #: Ground-truth drift onset, as a row offset into the *unsplit* frame that
+    #: `reference`/`testing` were cut from -- i.e. the row at which the data
+    #: generating process is known to change. Populated only by semi-synthetic
+    #: datasets that inject drift at a row they choose (DataElec2Injected);
+    #: None everywhere else, since a real-data split boundary is a guess at
+    #: where drift happened, not a label. Nothing consumes it yet: it exists so
+    #: a report/plot can mark the true onset (and, later, so the delay/false-
+    #: alarm metrics noted above OnlineCDReport can be computed against it).
+    drift_point: Optional[int] = None
 
     @property
     def len_reference(self) -> int:

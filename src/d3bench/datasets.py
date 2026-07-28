@@ -417,3 +417,161 @@ class DataElec2(Dataset):
             target=self.target,
             categorical_columns=self.categorical_columns,
         )
+
+
+class DataElec2Injected(DataElec2):
+    """Semi-synthetic *positive control* for concept drift, built on Elec2.
+
+    The unmodified Elec2 stream (DataElec2, scenarios/elec2_concept.toml)
+    turns out to drift covariately rather than conceptually: its label is
+    "did the NSW price move up against its own 24h moving average", a
+    self-adjusting rule that stays valid as price *levels* drift, so P(y|X)
+    holds while P(X) moves. That makes it a poor test of whether the
+    concept-drift detectors work at all -- a null result there is
+    indistinguishable from a broken pipeline.
+
+    This subclass supplies the missing control: it injects a genuine,
+    located P(y|X) change into the same stream and changes nothing else.
+    At row ``k = len(slice) * inject_fraction`` the labelling rule flips for
+    one region of feature space (rows with ``flip_feature`` above its
+    median); everywhere else, and everywhere before ``k``, the original
+    label stands. Two properties make the injected drift *pure* concept
+    drift:
+
+    * **No feature is ever written.** Only the label column is reassigned,
+      so P(X) is bit-identical to DataElec2's on both sides of ``k`` and no
+      covariate signal is added.
+    * **The flip is class-balanced.** Equal numbers of UP->DOWN and
+      DOWN->UP are flipped (seeded by ``inject_seed``), so the label counts
+      after ``k`` -- and hence P(y) -- are unchanged. Flipping one
+      direction only would inject prior drift alongside the concept drift
+      and confound the two.
+
+    The known onset is reported as ``Data.drift_point`` so a report can
+    measure detection against ground truth instead of against a guessed
+    split boundary. This is a labeled synthetic control, not a claim about
+    real Elec2: it answers "do the detectors fire when P(y|X) genuinely
+    changes?", which is what makes the unmodified scenario's covariate-only
+    result trustworthy.
+
+    Two placement constraints, both learned the hard way; neither is
+    cosmetic, and "simplifying" either one back silently produces a control
+    that validates nothing.
+
+    **The injection runs on the post-market slice, not the whole frame.**
+    Elec2's full series spans the NSW-Victoria market opening (``nem_row``,
+    where the Victoria columns activate) and carries large covariate swings
+    across it -- the very swings the unmodified scenario's covariate finding
+    documents. Injected into the whole frame, the flip's error step
+    (~6 percentage points) is buried under Elec2's own ~20pp error
+    fluctuation, so every detector's *first* firing latches onto the
+    pre-existing nonstationarity thousands of rows before the injected onset
+    and the control is masked. Restricting to the homogeneous regime after
+    the market opening (plus ``post_buffer`` rows to clear the activation
+    transient) gives the detectors a stationary pre-flip baseline, so the
+    injected change point is the first real change they see. The fix is to
+    clean the baseline, not to enlarge the flip: tuning the injection
+    upwards until detectors fire would only test whether they catch a shift
+    made big enough to be unmissable, rather than a realistic one.
+
+    **``inject_fraction`` must exceed ``train_fraction``** (both are
+    fractions *of the slice*) -- see the guard in ``inject_concept_drift``.
+    The concept path (d3bench.supervised) trains on the reference split and
+    streams the *testing* errors to the detectors, so an onset placed before
+    the split is off-screen: the detectors would watch a uniformly
+    post-flip, stationary error signal with no change point in it, and any
+    firing would be ordinary fluctuation. An obvious-looking 0.5 does
+    exactly that, landing thousands of rows inside the reference window, and
+    would additionally train the model on a label-contradictory mixture of
+    both rules. That is the same failure mode that makes real Elec2's NEM
+    event undetectable in this benchmark.
+    """
+
+    #: Absolute row of the NSW-Victoria market opening (verified: the
+    #: Victoria columns activate here), and the rows skipped after it to
+    #: clear the activation transient. Everything from nem_row + post_buffer
+    #: on is the homogeneous regime this control is built in -- see the
+    #: class docstring on why the whole frame does not work.
+    nem_row = 17424
+    post_buffer = 500
+    #: Fraction *of the post-market slice* at which the labelling rule
+    #: changes. 0.85 puts the onset ~halfway into the testing split, leaving
+    #: the reference split entirely pre-flip. Must stay above
+    #: train_fraction -- see the class docstring.
+    inject_fraction = 0.85
+    #: Feature whose upper half (above its median over the slice) is the
+    #: region of feature space the rule flips in. Read, never written.
+    flip_feature = "nswprice"
+    #: Seed for choosing which rows flip, so the injected stream is fixed.
+    inject_seed = 31
+
+    def post_market_frame(self) -> pd.DataFrame:
+        """Rows from the market opening (plus transient buffer) onward.
+
+        Positional, matching how the analysis notebooks slice it: Elec2 has
+        no missing values in the tested columns, so filter_data drops
+        nothing and position still equals absolute row.
+        """
+        return self.df.iloc[self.nem_row + self.post_buffer :]
+
+    def inject_concept_drift(self) -> tuple[pd.DataFrame, int]:
+        """Return (the post-market slice with flipped labels, the injection row k).
+
+        ``k`` is an offset into the returned slice, which is also the frame
+        the reference/testing split is then cut from -- so it stays
+        comparable to the detectors' stream offsets.
+        """
+        if self.inject_fraction <= self.train_fraction:
+            raise ValueError(
+                f"inject_fraction={self.inject_fraction} must be greater than "
+                f"train_fraction={self.train_fraction}: an onset at or before the "
+                "split falls in the reference window, which the concept-drift "
+                "detectors never see (they stream testing errors only, see "
+                "d3bench.supervised) -- the injected drift would be undetectable "
+                "by construction. See DataElec2Injected's docstring."
+            )
+
+        df = self.post_market_frame().copy()
+        drift_point = int(len(df) * self.inject_fraction)
+
+        # Positional throughout (numpy, not .loc) so this holds regardless of
+        # whether filter_data left a gappy index.
+        values = df[self.flip_feature].to_numpy(dtype=float)
+        region = (np.arange(len(df)) >= drift_point) & (values > np.median(values))
+        region_rows = np.flatnonzero(region)
+
+        labels = df[self.target].to_numpy(copy=True)
+        ups = region_rows[labels[region_rows] == "UP"]
+        downs = region_rows[labels[region_rows] == "DOWN"]
+        # Class-balanced: flipping n each way leaves the post-k label counts
+        # (and so P(y)) exactly as they were -- only P(y|X) moves.
+        n_flip = min(len(ups), len(downs))
+        rng = np.random.default_rng(self.inject_seed)
+        labels[rng.choice(ups, size=n_flip, replace=False)] = "DOWN"
+        labels[rng.choice(downs, size=n_flip, replace=False)] = "UP"
+
+        # ASSERTION OF INTENT: the label column is the only one assigned to
+        # here, so every feature column of `df` is still the one DataElec2
+        # would have produced. Do not add feature edits to this method --
+        # they would turn this control into a covariate+concept mixture.
+        df[self.target] = labels
+        return df, drift_point
+
+    def split_data(self) -> Data:
+        """Inject the label-rule flip, then split it exactly as DataElec2 does.
+
+        The injected post-market slice is swapped in only for the duration of
+        the super() call (rather than assigned onto self) so that the split
+        stays a pure function of the file: injecting into an already-injected
+        frame would flip a second, different set of rows. train_fraction then
+        applies to the slice, so reference is entirely pre-flip and the
+        testing stream carries the onset in its middle.
+        """
+        injected, drift_point = self.inject_concept_drift()
+        original, self.df = self.df, injected
+        try:
+            data = super().split_data()
+        finally:
+            self.df = original
+        data.drift_point = drift_point
+        return data

@@ -1,0 +1,28 @@
+# Positive control for elec2_concept.toml. Same stream and same tools, but
+# the labelling rule is flipped for one region of feature space partway
+# through (class-balanced, features untouched), so P(y|X) genuinely changes
+# at a known row while P(X) and P(y) do not. See
+# d3bench.datasets.DataElec2Injected: the unmodified elec2_concept scenario
+# turns out to carry covariate rather than concept drift, and this scenario
+# is what shows that null result is a property of the data and not of a
+# detector that never fires.
+#
+# Note the split differs from elec2_concept.toml despite the same file: the
+# injection runs on the post-market slice (from the NSW-Victoria market
+# opening onward), because across the full series Elec2's own covariate
+# swings mask the injected change point -- the same effect the covariate
+# finding documents. Reference/testing are cut from that slice, so they are
+# smaller than the unmodified scenario's.
+[data]
+dataset = "elec2_injected"
+drift_type = "concept"
+path = "datafiles/elecNormNew.arff"
+
+[run]
+# Same three tools as elec2_concept.toml, for a like-for-like contrast:
+# Evidently/NannyML declare empty online_cd_methods/batch_cd_methods (see
+# d3bench.tools), so they'd contribute nothing to a concept scenario now that
+# drift_type resolves the method families (config.DEFAULT_FAMILIES).
+tools = ["Alibi-Detect", "Frouros", "River"]
+criteria = ["FUNCTIONAL", "STATISTICS", "RUNTIME", "CPU_RUNTIME", "MEMORY"]
+vm = false

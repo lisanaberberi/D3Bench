@@ -3,10 +3,11 @@ This module contains the configuration of the datasets and tools used in the
 benchmarking process.
 """
 
+from pathlib import Path
 from typing import Type
 
 from d3bench import datasets, tools
-from d3bench.config import Criteria, Datafile, Framework
+from d3bench.config import Criteria, Datafile, Framework, scenarios_path
 from d3bench.datasets import Dataset
 from d3bench.results import Results
 from d3bench.tools import Tool
@@ -23,6 +24,7 @@ DATASET_CLASSES: dict[Datafile, Type[Dataset]] = {
     "motor": datasets.DataMotor,
     "motor_prior": datasets.DataMotorPrior,
     "elec2": datasets.DataElec2,
+    "elec2_injected": datasets.DataElec2Injected,
 }
 
 # Initialize the tools constant
@@ -42,12 +44,15 @@ TOOLS: dict[Framework, Type[Tool]] = {
 # which had drifted out of sync with the scenario files (e.g. "energy" here
 # used to default to Options' boundary (2022-01-01) while
 # scenarios/energy_covariate.toml has always split on 2020-04-01).
-_CANONICAL_SCENARIOS: dict[Datafile, str] = {
-    "energy": "scenarios/energy_covariate.toml",
-    "occupancy": "scenarios/occupancy_covariate.toml",
-    "motor": "scenarios/french_motor_covariate.toml",
-    "motor_prior": "scenarios/french_motor_prior.toml",
-    "elec2": "scenarios/elec2_concept.toml",
+# Anchored to config.scenarios_path (project-root-relative, not cwd-relative)
+# so that importing d3bench works from any working directory.
+_CANONICAL_SCENARIOS: dict[Datafile, Path] = {
+    "energy": scenarios_path / "energy_covariate.toml",
+    "occupancy": scenarios_path / "occupancy_covariate.toml",
+    "motor": scenarios_path / "french_motor_covariate.toml",
+    "motor_prior": scenarios_path / "french_motor_prior.toml",
+    "elec2": scenarios_path / "elec2_concept.toml",
+    "elec2_injected": scenarios_path / "elec2_injected_concept.toml",
 }
 
 

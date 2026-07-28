@@ -10,14 +10,41 @@ from d3bench.utils import DriftType
 # pylint: disable=too-few-public-methods
 
 
+# The D3Bench project root (this file is src/d3bench/config.py). The
+# datafiles/, results/ and scenarios/ directories live next to it, not inside
+# the package, and every path below used to be interpreted against the process
+# cwd -- which broke `import d3bench` from anywhere but the project root (e.g.
+# a notebook in scripts/, where a Jupyter kernel starts).
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_project_path(path: Union[str, Path]) -> Path:
+    """Resolve a benchmark path independently of the process cwd.
+
+    Absolute paths pass through. A relative path that already resolves from
+    the current working directory keeps that meaning, so a cwd-local override
+    (or an explicit DATA_PATH/RESULTS_PATH) still wins; otherwise it is taken
+    as relative to PROJECT_ROOT.
+    """
+    path = Path(path)
+    if path.is_absolute() or path.exists():
+        return path
+    return PROJECT_ROOT / path
+
+
 # Path where the data is stored
 DATA_PATH = os.getenv("DATA_PATH", "datafiles")
-data_path = Path(DATA_PATH)
+data_path = resolve_project_path(DATA_PATH)
 
 
 # Path where the results are stored
 RESULTS_PATH = os.getenv("RESULTS_PATH", "results")
-results_path = Path(RESULTS_PATH)
+results_path = resolve_project_path(RESULTS_PATH)
+
+
+# Path where the scenario TOML files are stored
+SCENARIOS_PATH = os.getenv("SCENARIOS_PATH", "scenarios")
+scenarios_path = resolve_project_path(SCENARIOS_PATH)
 
 
 # Define the types of drift detection methods
@@ -43,6 +70,7 @@ Datafile: TypeAlias = Literal[
     "motor",
     "motor_prior",
     "elec2",
+    "elec2_injected",
 ]
 
 
