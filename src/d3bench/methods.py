@@ -112,10 +112,10 @@ class BatchDD(StrEnum):
     # (e.g. JENSEN_SHANNON_DIVERGENCE_CATEGORICAL, HELLINGER_DISTANCE_CATEGORICAL) so
     # it doesn't collide with the continuous entry in NannyML.batch_dd_methods
     # (tools/__init__.py).
-    # TODO: The benchmark currently only exercises continuous data, so there's no
-    # categorical column to route these to yet -- they'll run but detect nothing
-    # until categorical columns are added.
-
+    # These are exercised by scenarios with genuinely categorical columns: the
+    # prior-drift label (DataMotorPrior: "claim"/"no_claim") and Elec2's
+    # day/class (concept). 
+    
     # Distance Based
     BHATTACHARYYA_DISTANCE = "Bhattacharyya Distance"
     EARTH_MOVER_DISTANCE = "Earth Mover's Distance"
