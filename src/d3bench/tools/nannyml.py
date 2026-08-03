@@ -15,8 +15,16 @@ def _alert_per_feature(results: Any, method: str, features: list[str]) -> dict[s
     A feature is left out if this method was never applicable to it (e.g. a
     categorical method run against a continuous column), so it does not
     count towards the "functional" denominator for that column.
+
+    Only the *analysis* period counts. NannyML returns both the chunks of the
+    window passed to `calculate()` (period "analysis") and the chunks of the
+    baseline passed to `fit()` (period "reference"); a reference chunk can
+    alert against thresholds derived from its own period's spread, so an
+    unfiltered `to_df()` reports the baseline's internal heterogeneity as
+    drift in the tested window. `period` is NannyML's own label, identical for
+    every dataset -- this is not a per-scenario setting.
     """
-    df = results.to_df()
+    df = results.filter(period="analysis").to_df()
     return {
         feature: bool(df[(feature, method, "alert")].any())
         for feature in features
@@ -29,9 +37,11 @@ def _statistic_per_feature(results: Any, method: str, features: list[str]) -> di
 
     NannyML reports one value per chunk, not a single number; take the chunk
     with the largest magnitude, the same "worst case over the window" choice
-    `_alert_per_feature` makes for the boolean verdict.
+    `_alert_per_feature` makes for the boolean verdict -- and, for the same
+    reason, over the analysis period only, so the D-value describes the tested
+    window rather than the largest chunk of the baseline.
     """
-    df = results.to_df()
+    df = results.filter(period="analysis").to_df()
     return {
         feature: float(df[(feature, method, "value")].abs().max())
         for feature in features
