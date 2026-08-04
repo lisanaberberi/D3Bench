@@ -2,7 +2,8 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 import pandas as pd
 from evidently.future.metrics import ValueDrift
@@ -47,6 +48,18 @@ class BaseTabularDetectors(utils.BaseTestMethod, ABC):
         self._x_reference = x_reference
         raise NotImplementedError("Evidence does not provide fit method")
 
+    #: Seed to pin numpy's *global* RNG around this method's run, or None to
+    #: leave it alone. Only needed for empirical_mmd: evidently's shared
+    #: permutation_test helper (legacy/calculations/stattests/utils.py) calls
+    #: np.random.seed(0) itself, so TVD/KL/JS/PSI/chi-square/Z/G/Fisher are
+    #: all reproducible, but mmd_stattest.py has its own permutation loop that
+    #: seeds nothing and draws from the global RNG -- so consecutive runs on
+    #: identical data returned different p-values and, near the 0.1 threshold,
+    #: different verdicts. Evidently 0.7.21 (latest) exposes no seed on
+    #: StatTest or _mmd_stattest, so pinning the global state around the call
+    #: is the only fix available from this side.
+    _global_rng_seed: Optional[int] = None
+
     def _run_reports(self, x_reference: Any, x_test: Any) -> dict[str, Any]:
         """Run each feature's report independently.
 
@@ -56,6 +69,27 @@ class BaseTabularDetectors(utils.BaseTestMethod, ABC):
         the whole method down; a feature that fails is logged and left out of
         the results instead, the same way NannyML skips inapplicable columns.
         """
+        with self._pinned_global_rng():
+            return self._run_reports_unseeded(x_reference, x_test)
+
+    @contextmanager
+    def _pinned_global_rng(self) -> Iterator[None]:
+        """Pin numpy's global RNG for the duration, restoring it afterwards.
+
+        Save/restore rather than a bare seed() so this cannot perturb any other
+        detector's stochastic behaviour (e.g. a later adapter's own sampling).
+        """
+        if self._global_rng_seed is None:
+            yield
+            return
+        state = np.random.get_state()
+        np.random.seed(self._global_rng_seed)
+        try:
+            yield
+        finally:
+            np.random.set_state(state)
+
+    def _run_reports_unseeded(self, x_reference: Any, x_test: Any) -> dict[str, Any]:
         results = {}
         for f, report in self.reports.items():
             try:
@@ -239,9 +273,18 @@ class SubsampledTabularDetectors(BaseTabularDetectors, ABC):
 
 
 class EmpiricalMaximumMeanDiscrepancy(SubsampledTabularDetectors):
-    """Empirical Maximum Mean Discrepancy"""
+    """Empirical Maximum Mean Discrepancy.
+
+    The one Evidently method that needs its RNG pinned from here -- see
+    BaseTabularDetectors._global_rng_seed. Note that pinning makes the result
+    *reproducible*, not precise: evidently draws only 100 permutations
+    (mmd_stattest.mmd_pval), so the p-value carries a Monte-Carlo standard
+    error of about 0.03 near its own 0.1 decision threshold, and a column
+    whose true p-value sits in that band could legitimately fall either side.
+    """
 
     detector_reference = "empirical_mmd"
+    _global_rng_seed = 31
 
 
 class TotalVariationDistance(SubsampledTabularDetectors):

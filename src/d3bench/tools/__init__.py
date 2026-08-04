@@ -234,19 +234,22 @@ class Evidently(Tool):
         needs no drift_type-specific override -- every tool that inspects
         this column, by whatever mechanism it uses, agrees it's categorical).
 
-        NOTE: this is a SEPARATE categorical-membership mechanism from the one
-        the continuous-only adapters (Frouros/Alibi/River) use. They route on
-        the explicit Data.categorical_columns list (via
-        utils.numeric_column_indices); Evidently instead routes on pandas
-        dtype (select_dtypes) here and in preprocess() below. There are thus
-        two sources of truth. They agree for every current dataset -- Elec2's
-        `day`, the one column where dtype and the explicit list would diverge,
-        is object dtype here so select_dtypes already treats it categorical,
-        matching the explicit list -- so this is left as-is rather than
-        rewired. A future dataset that stored a declared-categorical column in
-        a numeric dtype would split the two mechanisms; that is when this
-        should switch to Data.categorical_columns too."""
-        numeric = set(self.data.reference.select_dtypes(include="number").columns)
+        Declared-categorical columns are removed from the numeric set before
+        the dtype probe, matching utils.numeric_column_indices -- the rule the
+        continuous-only adapters (Frouros/Alibi/River) route on. Both halves
+        matter: the declared list catches a category stored in a numeric dtype
+        (an integer-coded region/rating, or Elec2's `day` had it decoded to
+        int rather than digit-strings), and the dtype probe still catches the
+        undeclared string columns of datasets that declare nothing at all
+        (energy/occupancy, French Motor). Previously this consulted dtype
+        alone, which agreed with the declared list on every shipped dataset
+        but would have split silently on the first numerically-stored
+        category -- Evidently would have kept running continuous tests on a
+        column every other framework had dropped, and the difference would
+        have been indistinguishable from a real disagreement in the
+        results."""
+        declared = set(self.data.categorical_columns)
+        numeric = set(self.data.reference.select_dtypes(include="number").columns) - declared
         wants_categorical = getattr(test, "categorical", False)
         return [
             f for f in self._monitored_columns
@@ -262,12 +265,12 @@ class Evidently(Tool):
         # build each method's per-feature detectors before preprocess runs;
         # a method never gets a Report for a column outside its own kind.
         #
-        # Like usable_features() above, this classifies by pandas dtype
-        # (select_dtypes), a DIFFERENT mechanism from Data.categorical_columns
-        # that the continuous-only adapters use -- see the note in
-        # usable_features() for why the two agree on every current dataset and
-        # when that would stop being true.
-        numerical = list(df.select_dtypes(include="number").columns)
+        # Same membership rule as usable_features() above -- declared
+        # categoricals first, dtype probe for the rest -- so the schema handed
+        # to evidently and the per-method column selection cannot disagree
+        # with each other, or with the other frameworks.
+        declared = set(self.data.categorical_columns)
+        numerical = [c for c in df.select_dtypes(include="number").columns if c not in declared]
         categorical = [c for c in df.columns if c not in numerical]
         schema = EDataDefinition(numerical_columns=numerical, categorical_columns=categorical)
         return EDataset.from_pandas(df, data_definition=schema)
