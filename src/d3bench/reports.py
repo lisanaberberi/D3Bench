@@ -91,13 +91,15 @@ class Report(BaseModel):
     n_reference_used: Optional[int] = Field(
         None,
         description=(
-            "Rows of the reference split this detector actually consumed, when it is one "
-            "of the few that caps them (kernel methods, permutation tests -- see "
-            "utils.BaseTestMethod.n_reference_used). None means the full split, i.e. "
-            "test_information.len_reference. Reported rather than equalised: the caps "
-            "differ by framework (Evidently/Alibi-Detect 1,000, Frouros 80,000; NannyML "
-            "and River never subsample), so a D-value is only comparable to another "
-            "computed at the same effective n."
+            "Rows of the reference split this detector actually scored. Equal to "
+            "test_information.len_reference whenever the detector ran on everything, and "
+            "lower only for the few that cap (kernel methods, permutation tests -- see "
+            "utils.BaseTestMethod.n_reference_used); comparing the two is how a reader "
+            "tells those apart. Null only when the functional criterion did not run. "
+            "Reported rather than equalised: the caps differ by framework "
+            "(Evidently/Alibi-Detect 1,000, Frouros 80,000; NannyML and River never "
+            "subsample), so a D-value is only comparable to another computed at the same "
+            "effective n."
         ),
     )
     n_testing_used: Optional[int] = Field(

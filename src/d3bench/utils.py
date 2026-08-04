@@ -229,9 +229,16 @@ class Data:  # pylint: disable=missing-class-docstring
     #: generating process is known to change. Populated only by semi-synthetic
     #: datasets that inject drift at a row they choose (DataElec2Injected);
     #: None everywhere else, since a real-data split boundary is a guess at
-    #: where drift happened, not a label. Nothing consumes it yet: it exists so
-    #: a report/plot can mark the true onset (and, later, so the delay/false-
-    #: alarm metrics noted above OnlineCDReport can be computed against it).
+    #: where drift happened, not a label.
+    #:
+    #: Read by the analysis layer -- scripts/elec2_injected_control.ipynb
+    #: locates the onset with it (and asserts no label was flipped before it,
+    #: and that the reference split is entirely pre-flip), and
+    #: scripts/generate_elec2_error_figure.py marks it on the error curve.
+    #: NOT read anywhere in the benchmark pipeline: no Report field is derived
+    #: from it, so the delay/false-alarm metrics noted above OnlineCDReport
+    #: remain uncomputed. Wiring those up is what would make it a benchmark
+    #: input rather than a plotting annotation.
     drift_point: Optional[int] = None
 
     @property

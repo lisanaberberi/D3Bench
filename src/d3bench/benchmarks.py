@@ -117,11 +117,21 @@ class BaseBenchmark(ABC):
         index = self.get_results().get("drift_index")
         return int(index) if index is not None else None
 
-    def get_sample_size(self, side: str) -> Optional[int]:
-        """Rows of `side` ("reference"/"testing") the detector actually used, or
-        None when it ran on the whole split (see Report.n_reference_used)."""
+    def get_sample_size(self, side: str) -> int:
+        """Rows of `side` ("reference"/"testing") the detector actually scored.
+
+        Only the capping adapters record anything (utils.BaseTestMethod
+        ._record_sample_size); everyone else falls through to the full split
+        size here rather than reporting null. Emitting the number either way
+        makes the field self-describing -- `n_reference_used ==
+        test_information.len_reference` says "uncapped" without the reader
+        having to know that a null once meant the same thing, which was easy to
+        misread as "not measured".
+        """
         value = self.get_results().get(f"n_{side}_used")
-        return int(value) if value is not None else None
+        if value is None:
+            return len(getattr(self.data, side))
+        return int(value)
 
     def report(self, criteria: set[Criteria]) -> Report:
         """Return the drift detection values."""
