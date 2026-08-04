@@ -88,6 +88,22 @@ class Report(BaseModel):
             "column in the benchmark paper's tables."
         ),
     )
+    n_reference_used: Optional[int] = Field(
+        None,
+        description=(
+            "Rows of the reference split this detector actually consumed, when it is one "
+            "of the few that caps them (kernel methods, permutation tests -- see "
+            "utils.BaseTestMethod.n_reference_used). None means the full split, i.e. "
+            "test_information.len_reference. Reported rather than equalised: the caps "
+            "differ by framework (Evidently/Alibi-Detect 1,000, Frouros 80,000; NannyML "
+            "and River never subsample), so a D-value is only comparable to another "
+            "computed at the same effective n."
+        ),
+    )
+    n_testing_used: Optional[int] = Field(
+        None,
+        description="As n_reference_used, for the testing split.",
+    )
     drift_index: Optional[int] = Field(
         None,
         description=(

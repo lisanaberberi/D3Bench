@@ -51,7 +51,7 @@ class BaseBenchmark(ABC):
         Each benchmark criterion (runtime, cputime, memory, results) calls this
         for its own independent detector, so no state leaks from one criterion's
         streaming into another's. Online-CD detectors accumulate state and their
-        status["drift"]/drift_detected latches; previously all criteria shared
+        status["drift"]/drift_detected accumulate; previously all criteria shared
         one detector (constructed once and shallow-copied), so results depended
         on whether the timing passes had run first -- drift_index in particular
         collapsed to 0 once a timing pass had already latched the verdict.
@@ -117,6 +117,12 @@ class BaseBenchmark(ABC):
         index = self.get_results().get("drift_index")
         return int(index) if index is not None else None
 
+    def get_sample_size(self, side: str) -> Optional[int]:
+        """Rows of `side` ("reference"/"testing") the detector actually used, or
+        None when it ran on the whole split (see Report.n_reference_used)."""
+        value = self.get_results().get(f"n_{side}_used")
+        return int(value) if value is not None else None
+
     def report(self, criteria: set[Criteria]) -> Report:
         """Return the drift detection values."""
         return reports.Report(
@@ -126,6 +132,8 @@ class BaseBenchmark(ABC):
             functional=self.get_functional() if "functional" in criteria else None,
             statistic=self.get_statistic() if "functional" in criteria else None,
             drift_index=self.get_drift_index() if "functional" in criteria else None,
+            n_reference_used=self.get_sample_size("reference") if "functional" in criteria else None,
+            n_testing_used=self.get_sample_size("testing") if "functional" in criteria else None,
             test_information=TestInformation(
                 framework=self.tool.name,
                 run_on_vm=self.run_on_vm,
@@ -294,5 +302,17 @@ class Job:
 
     @property
     def results(self) -> dict[str, Any]:
-        """Return the results of the benchmark."""
-        return self.detector.result()
+        """Return the results of the benchmark.
+
+        The effective sample sizes ride alongside the detector's own `result()`
+        entries rather than inside them: they are set on the instance by
+        whichever base class did the subsampling (utils.BaseTestMethod
+        ._record_sample_size), so no adapter's `result()` needs to know about
+        them. `setdefault` leaves an adapter free to report its own value.
+        """
+        results = self.detector.result()
+        for key in ("n_reference_used", "n_testing_used"):
+            value = getattr(self.detector, key, None)
+            if value is not None:
+                results.setdefault(key, value)
+        return results

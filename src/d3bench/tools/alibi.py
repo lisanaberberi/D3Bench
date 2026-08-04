@@ -60,6 +60,8 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         x = x[:, self._numeric_idx].astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
+        # Only ever called on the reference side; test() caps its own prefix.
+        self._record_sample_size("reference", self.max_samples, len(x))
         rng = np.random.default_rng(self._SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
@@ -100,6 +102,7 @@ class BaseUniOnlineTest(utils.BaseTestMethod, ABC):
         # not a random subsample -- so window/ERT-based online detectors still see a
         # contiguous, time-ordered stream.
         if self.max_samples is not None and len(x_test) > self.max_samples:
+            self._record_sample_size("testing", self.max_samples, len(x_test))
             x_test = x_test[: self.max_samples]
         for x in x_test:
             self.drift = self.detector.predict(x)
@@ -260,10 +263,12 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
     def detector_class(self) -> Any:
         """Property that returns the detector class."""
 
-    def _subsample(self, x: np.ndarray) -> np.ndarray:
+    def _subsample(self, x: np.ndarray, side: str) -> np.ndarray:
         x = x[:, self._numeric_idx].astype(np.float32, copy=False)
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
+        # Called for both sides here, unlike BaseUniOnlineTest's copy.
+        self._record_sample_size(side, self.max_samples, len(x))
         rng = np.random.default_rng(self._SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
@@ -291,10 +296,10 @@ class BaseUnivariateTest(utils.BaseTestMethod, ABC):
                 "every monitored column for this scenario is non-numeric."
             )
         self.features = [self.features[i] for i in self._numeric_idx]
-        self.detector = self.detector_class(self._subsample(x_reference), **self.config)
+        self.detector = self.detector_class(self._subsample(x_reference, "reference"), **self.config)
 
     def test(self, x_test: np.ndarray) -> None:
-        self.drift = self.detector.predict(self._subsample(x_test), drift_type="feature")
+        self.drift = self.detector.predict(self._subsample(x_test, "testing"), drift_type="feature")
 
     def result(self) -> dict[str, Any]:
         is_drift = self.drift["data"]["is_drift"]
@@ -362,11 +367,11 @@ class BaseMixedTypeTest(BaseUnivariateTest):
         config = dict(self.config)
         if self.infer_categories_per_feature and self._categorical_idx:
             config["categories_per_feature"] = {i: None for i in self._categorical_idx}
-        self.detector = self.detector_class(self._subsample(encoded), **config)
+        self.detector = self.detector_class(self._subsample(encoded, "reference"), **config)
 
     def test(self, x_test: np.ndarray) -> None:
         encoded = self._encode(x_test, fit=False)
-        self.drift = self.detector.predict(self._subsample(encoded), drift_type="feature")
+        self.drift = self.detector.predict(self._subsample(encoded, "testing"), drift_type="feature")
 
 
 class ChiSquareTest(BaseMixedTypeTest):
@@ -464,7 +469,7 @@ class BaseMultivariateTest(BaseUnivariateTest):
     """MMD/LSDD: multivariate, single verdict, no drift_type."""
 
     def test(self, x_test: np.ndarray) -> None:
-        self.drift = self.detector.predict(self._subsample(x_test))
+        self.drift = self.detector.predict(self._subsample(x_test, "testing"))
 
     def result(self) -> dict[str, Any]:
         is_drift = bool(self.drift["data"]["is_drift"])

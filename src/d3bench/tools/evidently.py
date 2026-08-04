@@ -209,9 +209,10 @@ class SubsampledTabularDetectors(BaseTabularDetectors, ABC):
     _MAX_SAMPLES = 1000
     _SEED = 31
 
-    def _subsample(self, dataset: EDataset) -> EDataset:
+    def _subsample(self, dataset: EDataset, side: str) -> EDataset:
         df = dataset.as_dataframe()
         if len(df) > self._MAX_SAMPLES:
+            self._record_sample_size(side, self._MAX_SAMPLES, len(df))
             df = df.sample(n=self._MAX_SAMPLES, random_state=self._SEED)
         # Reuse the numerical/categorical split preprocess() already
         # declared (dataset.data_definition) -- subsampling only changes
@@ -228,12 +229,12 @@ class SubsampledTabularDetectors(BaseTabularDetectors, ABC):
         return EDataset.from_pandas(df, data_definition=schema)
 
     def fit(self, x_reference: EDataset) -> None:
-        self._x_reference_subsampled = self._subsample(x_reference)
+        self._x_reference_subsampled = self._subsample(x_reference, "reference")
         raise NotImplementedError("Evidently does not provide fit method")
 
     def test(self, x_test: EDataset) -> None:
         x_reference = self._x_reference_subsampled
-        x_test = self._subsample(x_test)
+        x_test = self._subsample(x_test, "testing")
         self.results = self._run_reports(x_reference, x_test)
 
 

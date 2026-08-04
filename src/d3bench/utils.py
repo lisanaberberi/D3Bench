@@ -100,6 +100,33 @@ class BaseTestMethod(ABC):
     #: numeric_column_indices consumes this to exclude e.g. Elec2's `day`.
     categorical_columns: list[str] = []
 
+    #: Rows this detector actually consumed per side, when it is one of the
+    #: few that cannot run on the full split: kernel methods are O(n^2) and
+    #: permutation tests recompute their statistic once per iteration, so
+    #: Frouros/Evidently/Alibi-Detect cap those detectors (at three different
+    #: limits) while NannyML and River never do. None means "the whole split",
+    #: which is the case for the large majority of detectors.
+    #:
+    #: Recorded rather than equalised: the caps exist for real computational
+    #: reasons and cannot simply be lifted, but a D-value computed on 1,000
+    #: rows is not comparable to one computed on 513,946, and without this the
+    #: difference is invisible in the results. Set via `_record_sample_size`
+    #: at each subsampling site; surfaced on Report.n_reference_used /
+    #: n_testing_used (benchmarks.Job.results).
+    n_reference_used: Optional[int] = None
+    n_testing_used: Optional[int] = None
+
+    def _record_sample_size(self, side: str, n_used: int, n_available: int) -> None:
+        """Record how many rows a subsampling detector actually used.
+
+        No-op when nothing was dropped, so a cap set above the split size (e.g.
+        Frouros's 80,000 against Energy's 70,052) leaves the field None and the
+        report shows the full split, matching what happened.
+        """
+        if n_used >= n_available:
+            return
+        setattr(self, f"n_{side}_used", int(n_used))
+
     #: Set by Job (benchmarks.Job.__init__) only for a concept-drift scenario:
     #: the shared supervised classifier's 0/1 error stream (see
     #: d3bench.supervised.ErrorStream). None for covariate/prior, which is the

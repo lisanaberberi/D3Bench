@@ -80,10 +80,16 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
     def __init__(self, features: list[str]) -> None:
         self.detector = self.detector_class(self.config)
         self.features = features
-        self.drift: bool
+        # Whether drift fired at *any* point during the test pass. status["drift"]
+        # is a per-update flag that flips back to False after a detection for
+        # several of these detectors (CUSUM, Page-Hinkley, ECDDWT, HDDM-A/W --
+        # confirmed by drift_index being set while the end-of-stream flag reads
+        # False), so it is NOT a reliable end-of-stream verdict. Latch it here,
+        # mirroring the river adapter's drift_ever, so `drift` and `drift_index`
+        # always agree: fired-ever <=> drift_index is not None.
+        self.drift_ever: bool = False
         # Stream index at which drift first fired (set in test()); None until
-        # then. status["drift"] latches, so this is the only way result() can
-        # recover *when* it fired rather than just that it did.
+        # then. Paired with drift_ever above.
         self.drift_index: Optional[int] = None
 
     @property
@@ -146,17 +152,21 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
             self.detector.update(value=x)
 
     def test(self, x_test: np.ndarray) -> None:
-        # Reset before each stream so drift_index is the first-firing offset
-        # *within this test pass*, not a stale value from an earlier one.
+        # Reset before each stream so drift_ever/drift_index describe *this*
+        # test pass, not a stale value latched by an earlier one.
+        self.drift_ever = False
         self.drift_index = None
         # Supervised concept-drift path: stream the shared classifier's testing
-        # error over time (see fit above); status["drift"] latches on the first
-        # detection, which result() reports.
+        # error over time (see fit above). status["drift"] can un-latch between
+        # updates, so record the *first* firing (drift_index) and that it fired
+        # at all (drift_ever) rather than trusting the end-of-stream flag.
         if self.error_stream is not None:
             for i, error in enumerate(self.error_stream.testing):
                 self.detector.update(value=float(error))
-                if self.drift_index is None and self.detector.status["drift"]:
-                    self.drift_index = i
+                if self.detector.status["drift"]:
+                    self.drift_ever = True
+                    if self.drift_index is None:
+                        self.drift_index = i
             return
         # Only one feature is accepted
         x_test = x_test[:, self._numeric_idx].astype(np.float64)
@@ -166,19 +176,23 @@ class BaseOnlineCD(utils.BaseTestMethod, ABC):
         # fit+test pipeline runs ~10x per method per scenario) on French
         # Motor's ~164k-row testing split. Capped the same way as the batch
         # detectors' _subsample, and just as much of a no-op there.
+        self._record_sample_size("testing", min(len(x_test), _MAX_SAMPLES), len(x_test))
         x_test = _subsample_rows(x_test, _MAX_SAMPLES)
         for i, x in enumerate(np.linalg.norm(x_test, ord=2, axis=1)):
             self.detector.update(value=x)
-            if self.drift_index is None and self.detector.status["drift"]:
-                self.drift_index = i
+            if self.detector.status["drift"]:
+                self.drift_ever = True
+                if self.drift_index is None:
+                    self.drift_index = i
 
     def result(self) -> dict[str, Any]:
-        # Online CD detectors expose no uniform test statistic across algorithms,
-        # and status["drift"] latches -- a firing count is just "instances after
-        # first detection", a transition count is always 0/1 (duplicates drift).
-        # No comparable D-value exists; report the verdict plus drift_index, the
-        # stream offset at which it first fired (see test()).
-        return {"drift": self.detector.status["drift"], "drift_index": self.drift_index}
+        # Online CD detectors expose no uniform test statistic across algorithms.
+        # Report the verdict as drift_ever (fired at any point) rather than
+        # status["drift"] (the end-of-stream flag, which un-latches after a
+        # detection for CUSUM/Page-Hinkley/ECDDWT/HDDM and would report False
+        # while drift_index is set -- a self-contradiction). This guarantees
+        # drift <=> (drift_index is not None). No comparable D-value exists.
+        return {"drift": self.drift_ever, "drift_index": self.drift_index}
 
 
 class BayesianOnlineChangeDetection(BaseOnlineCD):
@@ -497,7 +511,7 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
             config["callbacks"] = _permutation_test()
         return self.detector_class(**config)
 
-    def _subsample(self, x: np.ndarray) -> np.ndarray:
+    def _subsample(self, x: np.ndarray, side: str) -> np.ndarray:
         """Draw at most `max_samples` rows, deterministically.
 
         Reseeded on every call: `test()` runs 7x per method under the default
@@ -507,6 +521,7 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
         """
         if self.max_samples is None or len(x) <= self.max_samples:
             return x
+        self._record_sample_size(side, self.max_samples, len(x))
         rng = np.random.default_rng(seed=_SEED)
         return x[rng.choice(len(x), size=self.max_samples, replace=False)]
 
@@ -534,12 +549,12 @@ class BaseBatchDD(utils.BaseTestMethod, ABC):
             self._numeric_idx = utils.numeric_column_indices(
                 x_reference, self.features, self.categorical_columns
             )
-        x_reference = self._subsample(x_reference)
+        x_reference = self._subsample(x_reference, "reference")
         for i in self._numeric_idx:
             self.detectors[i].fit(X=self._column(x_reference, i))
 
     def test(self, x_test: np.ndarray) -> None:
-        x_test = self._subsample(x_test)
+        x_test = self._subsample(x_test, "testing")
         self.results = {
             i: self.detectors[i].compare(X=self._column(x_test, i), **self.compare_kwargs)
             for i in self._numeric_idx
