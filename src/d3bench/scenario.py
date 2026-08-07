@@ -154,6 +154,17 @@ class Scenario(BaseModel):
     def load_dataset(self) -> Dataset:
         """Instantiate the scenario's dataset with its ground-truth split."""
         dataset_cls = DATASET_CLASSES[self.data.dataset]
+        # Dataset.drift_type is declared on the class, so a misdeclared
+        # scenario is caught here rather than after reading the datafile (the
+        # energy CSV is ~100 MB). run_benchmark still re-checks the *built*
+        # Data, which covers a subclass that overrides split_data.
+        if dataset_cls.drift_type != self.data.drift_type:
+            raise ValueError(
+                f"scenario declares drift_type={self.data.drift_type!r} but dataset "
+                f"{self.data.dataset!r} ({dataset_cls.__name__}) is a "
+                f"{dataset_cls.drift_type!r} construction -- "
+                "scenario file and Dataset subclass disagree"
+            )
         if self.data.split_boundary is not None:
             boundary = dt.datetime.strptime(self.data.split_boundary, _SPLIT_BOUNDARY_FORMAT).date()
             settings = DatasetOptions(boundary=boundary)
