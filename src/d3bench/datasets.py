@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings
 from scipy.io import arff as scipy_arff
 
 from d3bench import config
-from d3bench.utils import Data
+from d3bench.utils import Data, DriftType
 
 # pylint: disable=too-few-public-methods
 
@@ -46,7 +46,7 @@ class Options(BaseSettings):
         default=0.15,
         description=(
             "Target share of policies with >=1 claim in DataMotorPrior's resampled 'current' "
-            "set (natural population rate is ~5.0%, see datafiles/french-motor-paper.pdf Table 1)."
+            "set (natural population rate is ~5.0%, from literature)."
         ),
     )
 
@@ -69,54 +69,143 @@ def _read_dataset_file(path: Union[str, Path]) -> pd.DataFrame:
 
 
 class Dataset(ABC):
-    """Abstract class for the datasets."""
+    """Common interface for the benchmark datasets.
+
+    A subclass declares its *schema* (the class attributes below) and its
+    *split rule* (``_split``); loading, NaN filtering, column narrowing and
+    ``Data`` assembly happen here, once, so they cannot drift apart between
+    datasets.
+
+    Every default here suits the majority of datasets rather than the first
+    one written. In particular only energy/occupancy have a real time axis,
+    so time handling is opt-in via ``has_time_axis``/``TimeBoundaryDataset``
+    instead of being the base behaviour that the other three subclasses each
+    had to override.
+    """
 
     file_name: str
+    #: The X features monitored for drift. Excludes the label (``target``) and
+    #: any column needed only to compute the split (DataMotor's Region,
+    #: DataElec2's date), neither of which should reach a detector.
     measure_columns: list[str]
+    #: Label column name, or None for covariate scenarios. Forwarded to
+    #: Data.target, which is what Tool._monitored_columns keys on to tell a
+    #: prior/concept scenario apart from a covariate one.
+    target: Optional[str] = None
+    #: Which drift type this construction demonstrates. Declared here rather
+    #: than hardcoded in each split_data(), so Scenario.run_benchmark can
+    #: cross-check it against the scenario TOML.
+    drift_type: DriftType = "covariate"
     #: Columns among measure_columns/target to treat as categorical regardless
     #: of storage dtype -- forwarded to Data.categorical_columns by split_data()
     #: and read by the continuous-only adapters. Empty on datasets whose
     #: categorical columns are genuinely non-numeric (French Motor) or absent
     #: (energy/occupancy); overridden only by DataElec2 (see there).
     categorical_columns: list[str] = []
+    #: True only where the file carries genuine timestamps (energy,
+    #: occupancy). Gates the Options.data_start/data_end row filter below.
+    has_time_axis: bool = False
 
     def __init__(self, settings: Optional[Options] = None, path: Optional[Union[str, Path]] = None):
-        settings = settings or Options()
+        # Settings are kept whole rather than unpacked field-by-field onto
+        # self: the fields are per-dataset (current_regions is DataMotor's,
+        # seed/target_claim_rate are DataMotorPrior's), so copying them here
+        # would put every subclass's parameters on the shared base.
+        self.settings = settings or Options()
         self.df: pd.DataFrame = _read_dataset_file(path or config.data_path / self.file_name)
         self.df["time"] = self.preprocess_time()
-        self.data_start = settings.data_start
-        self.data_end = settings.data_end
         self.filter_data()  # Remove data out of limits
-        self.boundary = settings.boundary
-        self.current_regions = settings.current_regions
-        self.seed = settings.seed
-        self.target_claim_rate = settings.target_claim_rate
+
+    # ---- hooks a subclass may override ------------------------------------
+
+    def preprocess_time(self) -> pd.Series:
+        """Return the column to store as "time".
+
+        Defaults to an all-NaT placeholder, which is what the three datasets
+        with no genuine time axis (motor, motor_prior, elec2) want: the column
+        still has to exist, since Tool.reference_data always projects it and
+        NannyML reads it as ``timestamp_column_name``, but nothing consumes
+        its values. Datasets with real timestamps override this and inherit
+        from TimeBoundaryDataset.
+        """
+        return pd.Series(pd.NaT, index=self.df.index)
 
     @abstractmethod
-    def preprocess_time(self) -> pd.DataFrame:
-        """Returns the dataset with a datetime column."""
+    def _split(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Return ``(reference, testing)`` as row subsets of ``self.df``.
+
+        The one genuinely per-dataset decision, and the only member a new
+        dataset must implement. Row selection only -- ``split_data`` narrows
+        the columns afterwards, so an implementation is free to return frames
+        still carrying the column it split on.
+        """
+
+    def _finalize(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """Last per-dataset touch on each already-narrowed split frame.
+
+        Applied to reference and testing alike, on private copies. Only
+        DataMotorPrior needs it (relabelling ClaimNb to explicit categories).
+        """
+        return frame
+
+    # ---- shared machinery -------------------------------------------------
+
+    @property
+    def columns(self) -> list[str]:
+        """Columns carried into ``Data``: the features, the label if there is
+        one, and "time". Single definition of a narrowing that used to be done
+        in DataEnergy/DataOccupancy.__init__ and again, separately, inside
+        each other subclass's split_data()."""
+        return self.measure_columns + ([self.target] if self.target else []) + ["time"]
 
     def filter_data(self) -> None:
-        """Remove columns and rows not used in the benchmark."""
-        nan_rows = self.df[self.measure_columns].isna()
+        """Drop rows with missing values in the monitored columns, plus -- for
+        time-indexed datasets only -- rows outside the configured date range."""
+        cols = self.measure_columns + ([self.target] if self.target else [])
+        nan_rows = self.df[cols].isna()
         self.df = self.df[~nan_rows.any(axis=1)]  # rm rows with nan
-        self.df = self.df[self.df["time"] >= str(self.data_start)]
-        self.df = self.df[self.df["time"] <= str(self.data_end)]
+        if self.has_time_axis:
+            self.df = self.df[self.df["time"] >= str(self.settings.data_start)]
+            self.df = self.df[self.df["time"] <= str(self.settings.data_end)]
 
     def split_data(self) -> Data:
-        """Return the dataset for the given building."""
-        boundary_timestamp = pd.Timestamp(self.boundary)
-        train_filter = self.df["time"] < boundary_timestamp
+        """Assemble ``Data`` from the subclass's split rule and declared schema.
+
+        Narrowing to ``columns`` happens here for every dataset, so a column
+        used only to compute the split cannot leak into the tools that stack
+        every column physically present in the frame they are handed
+        (River/Frouros/Alibi-Detect -- see ``Tool._monitored_columns``).
+        """
+        reference, testing = self._split()
         return Data(
             features=self.measure_columns,
-            reference=self.df[train_filter],
-            testing=self.df[~train_filter],
-            drift_type="covariate",
+            reference=self._finalize(reference[self.columns].copy()),
+            testing=self._finalize(testing[self.columns].copy()),
+            drift_type=self.drift_type,
+            target=self.target,
             categorical_columns=self.categorical_columns,
         )
 
 
-class DataEnergy(Dataset):
+class TimeBoundaryDataset(Dataset):
+    """Datasets with a real time axis, split at a calendar boundary.
+
+    This is the energy/occupancy shape, kept in its own class rather than as
+    Dataset's default. It is the minority case (two of five datasets), and
+    having it on the base is what forced every other subclass to override
+    preprocess_time, filter_data and split_data together.
+    """
+
+    has_time_axis = True
+
+    def _split(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Reference is everything strictly before ``settings.boundary``."""
+        boundary_timestamp = pd.Timestamp(self.settings.boundary)
+        train_filter = self.df["time"] < boundary_timestamp
+        return self.df[train_filter], self.df[~train_filter]
+
+
+class DataEnergy(TimeBoundaryDataset):
     """Class for the energy dataset."""
 
     file_name = "energy_data.csv"
@@ -128,6 +217,10 @@ class DataEnergy(Dataset):
     def __init__(self, building_id: int, *args, **kwds):
         super().__init__(*args, **kwds)
         self.df = self.df[self.df["ids"] == building_id]
+        # Building metadata is constant within a building, so it is read off
+        # the first row and the columns themselves are left in self.df --
+        # split_data narrows to `columns` on the way out, so they cannot reach
+        # a detector regardless.
         self.purpose_of_use = self.df["purpose_of_use"].iloc
         self.gross_area = self.df["gross_area"].iloc[0]
         self.floor_area = self.df["floor_area"].iloc[0]
@@ -135,25 +228,20 @@ class DataEnergy(Dataset):
         self.total_volume = self.df["total_volume"].iloc[0]
         self.building_type = self.df["building_type"].iloc[0]
         self.building_id = self.df["ids"].iloc[0]
-        self.df = self.df[self.measure_columns + ["time"]]
 
-    def preprocess_time(self) -> pd.DataFrame:
+    def preprocess_time(self) -> pd.Series:
         """Merge date and time columns to datetime column."""
         datetime = self.df[DataEnergy.datetime_columns]
         return pd.to_datetime(datetime)
 
 
-class DataOccupancy(Dataset):
+class DataOccupancy(TimeBoundaryDataset):
     """Class for the occupancy dataset."""
 
     file_name = "occupancy_data.csv"
     measure_columns = ["measured", "co2", "temperature"]
 
-    def __init__(self, *args, **kwds):
-        super().__init__(*args, **kwds)
-        self.df = self.df[self.measure_columns + ["time"]]
-
-    def preprocess_time(self) -> pd.DataFrame:
+    def preprocess_time(self) -> pd.Series:
         """Parse the time column to a datetime column."""
         return pd.to_datetime(self.df["time"])
 
@@ -196,40 +284,22 @@ class DataMotor(Dataset):
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
-        if not self.current_regions:
+        if not self.settings.current_regions:
             raise ValueError(
                 "DataMotor requires settings.current_regions (e.g. ['R82', 'R93']) -- "
                 "there is no time-based boundary to fall back on for this dataset."
             )
 
-    def preprocess_time(self) -> pd.Series:
-        """No genuine time axis; Region grouping stands in for the split key."""
-        return pd.Series(pd.NaT, index=self.df.index)
-
-    def filter_data(self) -> None:
-        """Drop rows with missing values in the tested columns (no date range to apply)."""
-        nan_rows = self.df[self.measure_columns].isna()
-        self.df = self.df[~nan_rows.any(axis=1)]
-
-    def split_data(self) -> Data:
+    def _split(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Split by Region membership instead of a time boundary.
 
-        Region is only needed to compute the split; the returned frames carry
-        just measure_columns (+ the unused "time" column every Tool.preprocess
-        drops) -- Region, IDpol, ClaimNb, and Exposure are dropped here so they
-        can't leak into tools that stack every column in the frame (River,
-        Frouros), the same way DataEnergy/DataOccupancy pre-narrow to
-        measure_columns in their own __init__.
+        Region is only needed to compute the split, and is dropped -- along
+        with IDpol, ClaimNb and Exposure -- by Dataset.split_data narrowing to
+        ``columns``, so none of them can leak into the tools that stack every
+        column in the frame (River, Frouros).
         """
-        current_filter = self.df["Region"].isin(self.current_regions)
-        columns = self.measure_columns + ["time"]
-        return Data(
-            features=self.measure_columns,
-            reference=self.df.loc[~current_filter, columns],
-            testing=self.df.loc[current_filter, columns],
-            drift_type="covariate",
-            categorical_columns=self.categorical_columns,
-        )
+        current_filter = self.df["Region"].isin(self.settings.current_regions)
+        return self.df[~current_filter], self.df[current_filter]
 
 
 def _random_half_split(df: pd.DataFrame, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -295,49 +365,38 @@ class DataMotorPrior(Dataset):
         "Density",
     ]
     target = "ClaimNb"
+    drift_type: DriftType = "prior"
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
-        if not 0 < self.target_claim_rate < 1:
+        if not 0 < self.settings.target_claim_rate < 1:
             raise ValueError("target_claim_rate must be in (0, 1)")
 
-    def preprocess_time(self) -> pd.Series:
-        """No genuine time axis; a random split stands in for the split key."""
-        return pd.Series(pd.NaT, index=self.df.index)
-
-    def filter_data(self) -> None:
-        """Drop rows with missing values in the tested columns (no date range to apply)."""
-        cols = self.measure_columns + [self.target]
-        self.df = self.df[~self.df[cols].isna().any(axis=1)]
-
-    def split_data(self) -> Data:
+    def _split(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Random drift-free base split, then resample current's ClaimNb rate."""
-        reference, candidate_pool = _random_half_split(self.df, self.seed)
+        reference, candidate_pool = _random_half_split(self.df, self.settings.seed)
         testing = _resample_to_rate(
-            candidate_pool, candidate_pool[self.target] > 0, self.target_claim_rate, self.seed
+            candidate_pool,
+            candidate_pool[self.target] > 0,
+            self.settings.target_claim_rate,
+            self.settings.seed,
         )
-        columns = self.measure_columns + [self.target, "time"]
-        reference = reference[columns].copy()
-        testing = testing[columns].copy()
-        # Store as explicit category labels, not raw counts -- this is what
-        # was actually resampled on (ClaimNb > 0), and matters for
-        # cross-tool fairness: Evidently classifies columns by pandas
-        # dtype, but Frouros/Alibi-Detect classify by trying to cast the
-        # actual VALUES to float, ignoring dtype metadata -- so a dtype
-        # relabeling alone wouldn't make them agree. Only genuinely
-        # non-numeric values make every tool's own classification
-        # mechanism independently and consistently treat this column as
-        # categorical, without needing a per-tool override anywhere.
-        for frame in (reference, testing):
-            frame[self.target] = np.where(frame[self.target] > 0, "claim", "no_claim")
-        return Data(
-            features=self.measure_columns,
-            reference=reference,
-            testing=testing,
-            drift_type="prior",
-            target=self.target,
-            categorical_columns=self.categorical_columns,
-        )
+        return reference, testing
+
+    def _finalize(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """Store the label as explicit category labels, not raw counts.
+
+        "Claim vs no claim" is what was actually resampled on (ClaimNb > 0),
+        and the representation matters for cross-tool fairness: Evidently
+        classifies columns by pandas dtype, but Frouros/Alibi-Detect classify
+        by trying to cast the actual VALUES to float, ignoring dtype metadata
+        -- so a dtype relabeling alone wouldn't make them agree. Only
+        genuinely non-numeric values make every tool's own classification
+        mechanism independently and consistently treat this column as
+        categorical, without needing a per-tool override anywhere.
+        """
+        frame[self.target] = np.where(frame[self.target] > 0, "claim", "no_claim")
+        return frame
 
 
 class DataElec2(Dataset):
@@ -387,6 +446,7 @@ class DataElec2(Dataset):
         "transfer",
     ]
     target = "class"
+    drift_type: DriftType = "concept"
     #: Both are ARFF nominal attributes: `class` is UP/DOWN (genuinely
     #: non-numeric, so every adapter would classify it categorical anyway),
     #: but `day` is {1..7} decoded to digit-strings that cast cleanly to float
@@ -395,28 +455,10 @@ class DataElec2(Dataset):
     categorical_columns = ["day", "class"]
     train_fraction = 0.7
 
-    def preprocess_time(self) -> pd.Series:
-        """No genuine timestamps; row order (already chronological) stands in."""
-        return pd.Series(pd.NaT, index=self.df.index)
-
-    def filter_data(self) -> None:
-        """Drop rows with missing values in the tested columns (no date range to apply)."""
-        cols = self.measure_columns + [self.target]
-        nan_rows = self.df[cols].isna()
-        self.df = self.df[~nan_rows.any(axis=1)]
-
-    def split_data(self) -> Data:
+    def _split(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         """First train_fraction of rows (chronological order) as reference, rest as testing."""
         split_idx = int(len(self.df) * self.train_fraction)
-        columns = self.measure_columns + [self.target, "time"]
-        return Data(
-            features=self.measure_columns,
-            reference=self.df.iloc[:split_idx][columns].copy(),
-            testing=self.df.iloc[split_idx:][columns].copy(),
-            drift_type="concept",
-            target=self.target,
-            categorical_columns=self.categorical_columns,
-        )
+        return self.df.iloc[:split_idx], self.df.iloc[split_idx:]
 
 
 class DataElec2Injected(DataElec2):
