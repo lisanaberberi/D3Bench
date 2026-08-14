@@ -84,14 +84,18 @@ class BatchCD(StrEnum):
     Use Cases: Periodic model validation, offline analysis of model decay.
     """
 
-    # TODO: add subclassification
-
-    CHI_SQUARE_TEST = "Chi-square Test"
-    KOLMOGOROV_SMIRNOV_TEST = "Kolmogorov-Smirnov Test"
-    CRAMER_VON_MISES_TEST = "Cramér-von Mises Test"
-    FISHER_EXACT_TEST = "Fisher Exact Test"
+    # Distance Based
     MAXIMUM_MEAN_DISCREPANCY = "Maximum Mean Discrepancy"
     LEAST_SQUARES_DENSITY_DIFFERENCE = "Least-Squares Density Difference"
+
+
+    #Statistical Test
+    CHI_SQUARE_TEST = "Chi-square Test"
+    FISHER_EXACT_TEST = "Fisher Exact Test"
+    KOLMOGOROV_SMIRNOV_TEST = "Kolmogorov-Smirnov Test"
+    CRAMER_VON_MISES_TEST = "Cramér-von Mises Test"
+
+    #mixed / composite (routes per-column by dtype)
     MIXED_TYPE_TABULAR_DATA = "Mixed-Type Tabular Data"
 
 
@@ -132,6 +136,8 @@ class BatchDD(StrEnum):
     POPULATION_STABILITY_INDEX = "Population Stability Index"
     L_INFINITY_DISTANCE = "L-Infinity Distance"
     TOTAL_VARIATION_DISTANCE = "Total Variation Distance"
+    EMPIRICAL_MAXIMUM_MEAN_DISCREPANCY = "Empirical Maximum Mean Discrepancy"
+
 
     # Statistical Test
     ANDERSON_DARLING_TEST = "Anderson-Darling Test"
@@ -145,11 +151,8 @@ class BatchDD(StrEnum):
     MC_DIARMID_DRIFT_DETECTION_METHOD_TEST_E = "Mc Diarmid Drift Detection Method Test-E"
     MC_DIARMID_DRIFT_DETECTION_METHOD_TEST_G = "Mc Diarmid Drift Detection Method Test-G"
     WELCH_T_TEST = "Welch's T-Test"
-
-    # TODO: Unclassified
-    FISHER_EXACT_TEST = "Fisher Exact Test"
-    EPPS_SINGLETON_TEST = "EPPS-Singleton Test"
-    EMPIRICAL_MAXIMUM_MEAN_DISCREPANCY = "Empirical Maximum Mean Discrepancy"
+    FISHER_EXACT_TEST = "Fisher Exact Test" # categorical, exact
+    EPPS_SINGLETON_TEST = "EPPS-Singleton Test" # characteristic-function based
     G_TEST = "G-Test"
     T_TEST = "T-Test"
     Z_TEST = "Z-Test"
