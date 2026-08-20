@@ -18,6 +18,11 @@ class OnlineCD(StrEnum):
         efficiency.
     Use Cases: Model monitoring, fraud detection, real-time anomaly
         detection.
+
+    Note:
+    "Online" refers to the streaming execution mode in this package. It
+    does not necessarily imply online learning or updating of the
+    underlying predictive model.
     """
 
     # Change Detection
@@ -63,6 +68,11 @@ class OnlineDD(StrEnum):
         against noise.
     Use Cases: Feature monitoring, drift in unlabelled data, preemptive
         retraining triggers.
+    
+    Note:
+    "Online" refers to the streaming execution mode in this package. It
+    does not necessarily imply online learning or updating of the
+    underlying predictive model.
     """
 
     # Distance Based
